@@ -1,0 +1,17 @@
+{
+  "installationFolder": "/Users/alextellez/Desktop/AngularGIT/android/openCVLibrary455/build/intermediates/prefab_package/release/prefab",
+  "gradlePath": ":openCVLibrary455",
+  "packageInfo": {
+    "packageName": "openCVLibrary455",
+    "packageSchemaVersion": 2,
+    "packageDependencies": [],
+    "modules": [
+      {
+        "moduleName": "opencv_jni_shared",
+        "moduleHeaders": "/Users/alextellez/Desktop/AngularGIT/android/openCVLibrary455/native/jni/include",
+        "moduleExportLibraries": [],
+        "abis": []
+      }
+    ]
+  }
+}

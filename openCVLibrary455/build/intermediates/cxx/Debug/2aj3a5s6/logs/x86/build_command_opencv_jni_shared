@@ -1,0 +1,4 @@
+/Users/alextellez/Library/Android/sdk/cmake/3.22.1/bin/ninja \
+  -C \
+  /Users/alextellez/Desktop/AngularGIT/android/openCVLibrary455/.cxx/Debug/2aj3a5s6/x86 \
+  opencv_jni_shared
