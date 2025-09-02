@@ -1,5 +1,5 @@
 {
-  "installationFolder": "/Users/alextellez/Desktop/AngularGIT/android/sdk/build/intermediates/prefab_package/debug/prefab",
+  "installationFolder": "C:\\GITAngular\\Android\\scannerPRO\\sdk\\build\\intermediates\\prefab_package\\debug\\prefab",
   "gradlePath": ":sdk",
   "packageInfo": {
     "packageName": "sdk",
@@ -8,7 +8,7 @@
     "modules": [
       {
         "moduleName": "opencv_jni_shared",
-        "moduleHeaders": "/Users/alextellez/Desktop/AngularGIT/android/sdk/native/jni/include",
+        "moduleHeaders": "C:\\GITAngular\\Android\\scannerPRO\\sdk\\native\\jni\\include",
         "moduleExportLibraries": [],
         "abis": []
       }

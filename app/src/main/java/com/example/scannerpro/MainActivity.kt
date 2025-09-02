@@ -1,49 +1,32 @@
 package com.example.scannerpro
 
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.tooling.preview.Preview
-import com.example.scannerpro.ui.CameraScreen
+import androidx.navigation.NavType
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
+import com.example.scannerpro.ui.DetailScreen
+import com.example.scannerpro.ui.HomeView
+import com.example.scannerpro.ui.ListScreen
+import com.example.scannerpro.ui.Testvista
 import com.example.scannerpro.ui.theme.ScannerPROTheme
-
-import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.unit.dp
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            var showCamera by remember { mutableStateOf(false) }
-
-            if (showCamera) {
-                CameraScreen()
-            } else {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Button(
-                        onClick = { showCamera = true },
-                        modifier = Modifier.padding(16.dp)
-                    ) {
-                        Text("Abrir cámara")
-                    }
+            ScannerPROTheme {            // usa tu theme
+                Surface(color = MaterialTheme.colorScheme.background) {
+                    AppNavHost()
                 }
             }
         }
@@ -51,17 +34,38 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun Greeting(name: String, modifier: Modifier = Modifier) {
-    Text(
-        text = "Hello $name!",
-        modifier = modifier
-    )
-}
+fun AppNavHost() {
+    val navController = rememberNavController()
 
-@Preview(showBackground = true)
-@Composable
-fun GreetingPreview() {
-    ScannerPROTheme {
-        Greeting("Android")
+    NavHost(navController, startDestination = "home") {
+
+        composable("home") {
+            HomeView(
+                onNavigateToList = { navController.navigate("list") },
+                onNavigateToDetail = { navController.navigate("detail/0") },
+                onNavigateTest = { navController.navigate("test") }
+            )
+        }
+
+        composable("list") {
+            ListScreen(onItemClick = { itemId ->
+                navController.navigate("detail/$itemId")
+            })
+        }
+
+        composable("test") {
+            Testvista(
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(
+            "detail/{itemId}",
+            arguments = listOf(navArgument("itemId") { type = NavType.IntType })
+        ) { backStackEntry ->
+            val itemId = backStackEntry.arguments?.getInt("itemId") ?: 0
+            DetailScreen(itemId)
+        }
     }
 }
+

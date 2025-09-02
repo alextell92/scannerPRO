@@ -80,6 +80,7 @@ dependencies {
     // Room
     implementation(libs.androidx.room.runtime)
     implementation(project(":openCVLibrary455"))
+    implementation(libs.androidx.navigation.compose)
     kapt(libs.androidx.room.compiler)
 
 
@@ -87,6 +88,7 @@ dependencies {
     implementation(libs.hilt.android)
     kapt(libs.hilt.compiler)
 
+    implementation(libs.material3)
 
 
     testImplementation(libs.junit)
