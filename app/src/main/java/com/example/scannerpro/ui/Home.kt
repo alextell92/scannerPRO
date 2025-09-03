@@ -75,7 +75,7 @@ fun HomeScreen(  scannedItems: List<String>,
                     Text("Menu", fontSize = 18.sp, fontWeight = FontWeight.Bold)
                     Text("Resumen: acciones rápidas", style = MaterialTheme.typography.bodySmall)
                 }
-                Button(onClick = { irA(Screen.PantallaA.route) }) {
+                Button(onClick = { irA(Screen.Home.route) }) {
                     Text("Acción")
                 }
             }
@@ -95,7 +95,7 @@ fun HomeScreen(  scannedItems: List<String>,
                     // ejemplo de varias opciones; podrían venir de un array dinámico
                     val options = listOf("Nueva búsqueda", "Ajustes", "Exportar", "Filtrar", "Ayuda", "Limpiar")
                     options.forEach { opt ->
-                        Button(onClick = { irA(Screen.PantallaB.route) }, modifier = Modifier.height(40.dp)) {
+                        Button(onClick = { irA(Screen.Home.route) }, modifier = Modifier.height(40.dp)) {
                             Text(opt)
                         }
                     }
@@ -134,7 +134,7 @@ fun HomeScreen(  scannedItems: List<String>,
                                     // cada item es clickable
                                     Card(modifier = Modifier
                                         .fillMaxWidth()
-                                        .clickable { irA(Screen.PantallaB.route) }
+                                        .clickable { irA(Screen.Home.route) }
                                     ) {
                                         Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
                                             Column(modifier = Modifier.weight(1f)) {

@@ -2,18 +2,15 @@
 
 package com.example.scannerpro
 
-import ads_mobile_sdk.h5
-import android.R.attr.maxHeight
-import android.R.attr.maxWidth
-import android.net.http.SslCertificate.saveState
+import android.graphics.pdf.content.PdfPageGotoLinkContent
 import android.os.Bundle
-import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.annotation.DrawableRes
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -21,12 +18,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialogDefaults.containerColor
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -34,42 +32,42 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
-import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import androidx.navigation.navArgument
 //import com.example.scannerpro.ui.DetailScreen
 //import com.example.scannerpro.ui.HomeView
 //import com.example.scannerpro.ui.ListScreen
 //import com.example.scannerpro.ui.Testvista
-import com.example.scannerpro.ui.theme.ScannerPROTheme
-import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.unit.Dp
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.currentBackStackEntryAsState
 import com.example.scannerpro.ui.HomeScreen
 
 sealed class Screen(val route: String) {
     object Home : Screen("home")
-    object PantallaA : Screen("pantalla_a")
-    object PantallaB : Screen("pantalla_b")
+    object Camara : Screen("camara")
+    object Archivos : Screen("archivos")
+    object Usuario : Screen("usuario")
+
+
+    object Acciones : Screen("herramientas")
 }
 
-data class BottomNavItem(val screen: Screen, val label: String, val icon: ImageVector)
 
+
+//data class BottomNavItem(val screen: Screen, val label: String, val icon: Int)
+
+// Data class que guarda un id de drawable
+data class BottomNavItem(@DrawableRes val iconRes: Int, val screen: Screen, val label: String)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -122,14 +120,21 @@ fun AppEntry() {
             composable(Screen.Home.route) {
                 HomeScreen (sample,{ dest -> navController.navigate(dest) })
             }
-            composable(Screen.PantallaA.route) {
+            composable(Screen.Archivos.route) {
                 PantallaAScreen(
                     irAHome = { navController.navigate(Screen.Home.route) },
-                    irAPantallaB = { navController.navigate(Screen.PantallaB.route) },
+                    irAPantallaB = { navController.navigate(Screen.Archivos.route) },
                     volver = { navController.popBackStack() }
                 )
             }
-            composable(Screen.PantallaB.route) {
+            composable(Screen.Usuario.route) {
+                PantallaBScreen(
+                    irAHome = { navController.navigate(Screen.Home.route) },
+                    volver = { navController.popBackStack() }
+                )
+            }
+
+            composable(Screen.Camara.route) {
                 PantallaBScreen(
                     irAHome = { navController.navigate(Screen.Home.route) },
                     volver = { navController.popBackStack() }
@@ -153,20 +158,23 @@ fun AppEntry() {
 @Composable
 fun BottomBar(navController: androidx.navigation.NavHostController) {
     val items = listOf(
-        BottomNavItem(Screen.Home, "Home", Icons.Default.Home),
-        BottomNavItem(Screen.PantallaA, "A", Icons.Default.List),
-        BottomNavItem(Screen.PantallaB, "B", Icons.Default.Settings)
+        BottomNavItem(R.drawable.hogar, Screen.Home, "Inicio"),
+        BottomNavItem(R.drawable.expediente, Screen.Archivos, "Archivos"),
+        BottomNavItem(R.drawable.camara_fotografica, Screen.Camara, ""),
+        BottomNavItem(R.drawable.app, Screen.Acciones, "Acciones"),
+        BottomNavItem(R.drawable.perfil, Screen.Usuario, "Usuario")
     )
-
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
     val currentRoute = navBackStackEntry?.destination?.route
 
     NavigationBar {
+
         items.forEach { item ->
             val selected = currentRoute == item.screen.route
             NavigationBarItem(
                 selected = selected,
+
                 onClick = {
                     navController.navigate(item.screen.route) {
                         // evita apilar destinos repetidos y restaura estado
@@ -177,12 +185,32 @@ fun BottomBar(navController: androidx.navigation.NavHostController) {
                         restoreState = true
                     }
                 },
-                icon = { Icon(item.icon, contentDescription = item.label) },
+                icon = {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp) // tamaño del círculo
+                            .background(
+                                color = if (selected) Color(0xFF4CAF50) // verde solo cuando está seleccionado
+                                else Color.Transparent,
+                                shape = CircleShape
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            painter = painterResource(id = item.iconRes),
+                            contentDescription = item.label,
+                            modifier = Modifier.size(20.dp), // tamaño real del ícono
+                            tint = if (selected) Color.White // ícono blanco cuando está activo
+                            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        )
+                    }
+                },
                 label = { Text(item.label) }
             )
         }
     }
 }
+
 
 
 @Composable
