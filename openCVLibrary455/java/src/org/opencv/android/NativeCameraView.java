@@ -132,7 +132,7 @@ public class NativeCameraView extends CameraBridgeViewBase {
 
             if (mCamera == null)
                 return false;
-            if (mCamera.isOpened() == false)
+            if (!mCamera.isOpened())
                 return false;
 
             if (mCameraIndex != CAMERA_ID_BACK && mCameraIndex != CAMERA_ID_FRONT)
@@ -208,10 +208,10 @@ public class NativeCameraView extends CameraBridgeViewBase {
             if (mRgba != null) mRgba.release();
         }
 
-        private VideoCapture mCapture;
-        private Mat mRgba;
-        private Mat mGray;
-    };
+        private final VideoCapture mCapture;
+        private final Mat mRgba;
+        private final Mat mGray;
+    }
 
     private class CameraWorker implements Runnable {
 

@@ -16,11 +16,14 @@ activityCompose = "1.8.0"
 composeBom = "2024.09.00"
 material = "1.12.0"
 material3 = "1.3.2"
+materialVersion = "<compose-version>"
 opencvAndroid = "4.5.5"
 playServicesMlkitDocumentScanner = "16.0.0-beta1"
 roomRuntime = "2.7.2"
 textRecognition = "16.0.1"
 navigationCompose = "2.9.3"
+adsMobileSdk = "0.19.0-beta01"
+foundation = "1.9.0"
 
 [libraries]
 androidx-appcompat = { module = "androidx.appcompat:appcompat", version.ref = "appcompat" }
@@ -30,6 +33,7 @@ androidx-camera-lifecycle = { module = "androidx.camera:camera-lifecycle", versi
 androidx-camera-view = { module = "androidx.camera:camera-view", version.ref = "cameraView" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-core-ktx-v1101 = { module = "androidx.core:core-ktx", version.ref = "coreKtxVersion" }
+androidx-material = { module = "androidx.compose.material:material", version.ref = "materialVersion" }
 androidx-room-compiler = { module = "androidx.room:room-compiler", version.ref = "roomRuntime" }
 androidx-room-runtime = { module = "androidx.room:room-runtime", version.ref = "roomRuntime" }
 coil-compose = { module = "io.coil-kt:coil-compose", version.ref = "coilCompose" }
@@ -55,6 +59,8 @@ opencv-android = { module = "org.opencv:opencv-android", version.ref = "opencvAn
 play-services-mlkit-document-scanner = { module = "com.google.android.gms:play-services-mlkit-document-scanner", version.ref = "playServicesMlkitDocumentScanner" }
 text-recognition = { module = "com.google.mlkit:text-recognition", version.ref = "textRecognition" }
 androidx-navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigationCompose" }
+ads-mobile-sdk = { group = "com.google.android.libraries.ads.mobile.sdk", name = "ads-mobile-sdk", version.ref = "adsMobileSdk" }
+androidx-foundation = { group = "androidx.compose.foundation", name = "foundation", version.ref = "foundation" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

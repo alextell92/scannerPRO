@@ -3,7 +3,7 @@ package org.opencv.core;
 //javadoc:Scalar_
 public class Scalar {
 
-    public double val[];
+    public double[] val;
 
     public Scalar(double v0, double v1, double v2, double v3) {
         val = new double[] { v0, v1, v2, v3 };
@@ -76,10 +76,8 @@ public class Scalar {
     @Override
     public boolean equals(Object obj) {
         if (this == obj) return true;
-        if (!(obj instanceof Scalar)) return false;
-        Scalar it = (Scalar) obj;
-        if (!java.util.Arrays.equals(val, it.val)) return false;
-        return true;
+        if (!(obj instanceof Scalar it)) return false;
+        return java.util.Arrays.equals(val, it.val);
     }
 
     @Override

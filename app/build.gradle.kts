@@ -81,6 +81,8 @@ dependencies {
     implementation(libs.androidx.room.runtime)
     implementation(project(":openCVLibrary455"))
     implementation(libs.androidx.navigation.compose)
+    implementation(libs.ads.mobile.sdk)
+    implementation(libs.androidx.foundation)
     kapt(libs.androidx.room.compiler)
 
 
@@ -89,6 +91,8 @@ dependencies {
     kapt(libs.hilt.compiler)
 
     implementation(libs.material3)
+
+    implementation(libs.androidx.material)
 
 
     testImplementation(libs.junit)

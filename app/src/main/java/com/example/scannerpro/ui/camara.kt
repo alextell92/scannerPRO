@@ -19,7 +19,7 @@ import java.util.concurrent.Executors
 fun CameraScreen() {
     val context = LocalContext.current
     val cameraProviderFuture = remember { ProcessCameraProvider.getInstance(context) }
-    val executor: ExecutorService = remember { Executors.newSingleThreadExecutor() }
+    remember { Executors.newSingleThreadExecutor() }
 
     AndroidView(
         factory = { ctx ->
@@ -27,7 +27,7 @@ fun CameraScreen() {
             cameraProviderFuture.addListener({
                 val cameraProvider = cameraProviderFuture.get()
                 val preview = androidx.camera.core.Preview.Builder().build().also {
-                    it.setSurfaceProvider(previewView.surfaceProvider)
+                    it.surfaceProvider = previewView.surfaceProvider
                 }
                 val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
                 cameraProvider.unbindAll()

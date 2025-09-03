@@ -51,7 +51,7 @@ public class TermCriteria {
         if (vals != null) {
             type = vals.length > 0 ? (int) vals[0] : 0;
             maxCount = vals.length > 1 ? (int) vals[1] : 0;
-            epsilon = vals.length > 2 ? (double) vals[2] : 0;
+            epsilon = vals.length > 2 ? vals[2] : 0;
         } else {
             type = 0;
             maxCount = 0;
@@ -80,8 +80,7 @@ public class TermCriteria {
     @Override
     public boolean equals(Object obj) {
         if (this == obj) return true;
-        if (!(obj instanceof TermCriteria)) return false;
-        TermCriteria it = (TermCriteria) obj;
+        if (!(obj instanceof TermCriteria it)) return false;
         return type == it.type && maxCount == it.maxCount && epsilon == it.epsilon;
     }
 
