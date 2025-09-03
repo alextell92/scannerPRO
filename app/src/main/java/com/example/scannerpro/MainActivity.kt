@@ -121,22 +121,29 @@ fun AppEntry() {
                 HomeScreen (sample,{ dest -> navController.navigate(dest) })
             }
             composable(Screen.Archivos.route) {
-                PantallaAScreen(
-                    irAHome = { navController.navigate(Screen.Home.route) },
+                ArchivoView (
+                    irAHome = { navController.navigate(Screen.Archivos.route) },
                     irAPantallaB = { navController.navigate(Screen.Archivos.route) },
                     volver = { navController.popBackStack() }
                 )
             }
-            composable(Screen.Usuario.route) {
-                PantallaBScreen(
-                    irAHome = { navController.navigate(Screen.Home.route) },
+            composable(Screen.Camara.route) {
+                CamaraView(
+                    irAHome = { navController.navigate(Screen.Camara.route) },
                     volver = { navController.popBackStack() }
                 )
             }
 
-            composable(Screen.Camara.route) {
-                PantallaBScreen(
-                    irAHome = { navController.navigate(Screen.Home.route) },
+            composable(Screen.Acciones.route) {
+                AccionesView (
+                    irAHome = { navController.navigate(Screen.Acciones.route) },
+                    volver = { navController.popBackStack() }
+                )
+            }
+
+            composable(Screen.Usuario.route) {
+                UsuarioView (
+                    irAHome = { navController.navigate(Screen.Usuario.route) },
                     volver = { navController.popBackStack() }
                 )
             }
@@ -214,91 +221,93 @@ fun BottomBar(navController: androidx.navigation.NavHostController) {
 
 
 @Composable
-fun PantallaAScreen(irAHome: () -> Unit, irAPantallaB: () -> Unit, volver: () -> Unit) {
+fun ArchivoView(irAHome: () -> Unit, irAPantallaB: () -> Unit, volver: () -> Unit) {
     val configuration = LocalConfiguration.current
-    val screenH = configuration.screenHeightDp.toFloat()
+
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height((screenH * 0.12f).dp), // header con altura relativa
-            contentAlignment = Alignment.CenterStart
-        ) {
-            Text("Pantalla A", style = MaterialTheme.typography.titleLarge)
-        }
+        Text("Archivo", style = MaterialTheme.typography.titleLarge)
+        Spacer(modifier = Modifier.height(16.dp))
 
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Button(onClick = irAPantallaB, modifier = Modifier.fillMaxWidth(0.8f).height(56.dp)) {
-                Text("Ir a Pantalla B")
-            }
-            Spacer(modifier = Modifier.height(12.dp))
-            Button(onClick = irAHome, modifier = Modifier.fillMaxWidth(0.8f).height(56.dp)) {
-                Text("Ir a Home")
-            }
-        }
-
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height((screenH * 0.08f).dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Button(onClick = volver) { Text("Volver") }
+        Spacer(modifier = Modifier.height(8.dp))
+        Button(onClick = volver, modifier = Modifier.fillMaxWidth(0.7f).height(50.dp)) {
+            Text("Volver")
         }
     }
 }
 
 @Composable
-fun PantallaBScreen(irAHome: () -> Unit, volver: () -> Unit) {
+fun CamaraView(irAHome: () -> Unit, volver: () -> Unit) {
     val configuration = LocalConfiguration.current
-    val isLandscape = configuration.screenWidthDp > configuration.screenHeightDp
 
-    if (isLandscape) {
-        Row(
-            modifier = Modifier.fillMaxSize().padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("Pantalla B", style = MaterialTheme.typography.titleLarge)
-            Column {
-                Button(onClick = irAHome, modifier = Modifier.width(220.dp).height(50.dp)) {
-                    Text("Ir Home")
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                Button(onClick = volver, modifier = Modifier.width(220.dp).height(50.dp)) {
-                    Text("Volver")
-                }
-            }
+
+
+    Column(
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text("Camara", style = MaterialTheme.typography.titleLarge)
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Spacer(modifier = Modifier.height(8.dp))
+        Button(onClick = volver, modifier = Modifier.fillMaxWidth(0.7f).height(50.dp)) {
+            Text("Volver")
         }
-    } else {
+    }
+}
+
+
+
+@Composable
+fun AccionesView(irAHome: () -> Unit, volver: () -> Unit) {
+    val configuration = LocalConfiguration.current
+
+
         Column(
             modifier = Modifier.fillMaxSize().padding(16.dp),
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text("Pantalla B", style = MaterialTheme.typography.titleLarge)
+            Text("Acciones", style = MaterialTheme.typography.titleLarge)
             Spacer(modifier = Modifier.height(16.dp))
-            Button(onClick = irAHome, modifier = Modifier.fillMaxWidth(0.7f).height(50.dp)) {
-                Text("Ir Home")
-            }
+
             Spacer(modifier = Modifier.height(8.dp))
             Button(onClick = volver, modifier = Modifier.fillMaxWidth(0.7f).height(50.dp)) {
                 Text("Volver")
             }
         }
+
+}
+
+
+@Composable
+fun UsuarioView(irAHome: () -> Unit, volver: () -> Unit) {
+    val configuration = LocalConfiguration.current
+
+
+    Column(
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text("Usuario", style = MaterialTheme.typography.titleLarge)
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Spacer(modifier = Modifier.height(8.dp))
+        Button(onClick = volver, modifier = Modifier.fillMaxWidth(0.7f).height(50.dp)) {
+            Text("Volver")
+        }
     }
 }
+
+
+
+
 //@Composable
 //fun AppNavHost() {
 //    val navController = rememberNavController()
