@@ -59,6 +59,9 @@ dependencies {
 // Coil para Compose (cargar imágenes desde Uri)
     implementation(libs.coil.compose)
 
+    implementation(libs.accompanist.permissions)
+
+
 // Opcional: si quieres exportar PDF y usar FileProvider no necesitas otra dependencia
 
 
@@ -72,6 +75,9 @@ dependencies {
     implementation(libs.androidx.camera.camera2)
     implementation(libs.androidx.camera.lifecycle)
     implementation(libs.androidx.camera.view)
+
+
+    // CameraX
 
 
     // ML Kit OCR
@@ -93,6 +99,13 @@ dependencies {
     implementation(libs.material3)
 
     implementation(libs.androidx.material)
+
+    // Asegúrate de tener esta línea
+    implementation(libs.androidx.compose.material3.material3)
+
+    // A veces, los íconos extendidos son necesarios si usas otros más específicos
+    implementation(libs.androidx.material.icons.extended)
+
 
 
     testImplementation(libs.junit)

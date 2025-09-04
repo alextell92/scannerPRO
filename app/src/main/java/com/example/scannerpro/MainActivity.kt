@@ -4,6 +4,7 @@ package com.example.scannerpro
 
 import android.graphics.pdf.content.PdfPageGotoLinkContent
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -50,6 +51,7 @@ import androidx.navigation.compose.rememberNavController
 //import com.example.scannerpro.ui.Testvista
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.currentBackStackEntryAsState
+import com.example.scannerpro.ui.DocumentScannerScreen
 import com.example.scannerpro.ui.HomeScreen
 
 sealed class Screen(val route: String) {
@@ -57,11 +59,8 @@ sealed class Screen(val route: String) {
     object Camara : Screen("camara")
     object Archivos : Screen("archivos")
     object Usuario : Screen("usuario")
-
-
     object Acciones : Screen("herramientas")
 }
-
 
 
 //data class BottomNavItem(val screen: Screen, val label: String, val icon: Int)
@@ -74,17 +73,11 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-                 // usa tu theme
-
+            // Entrada de aplicacion
             AppEntry()
-
-
         }
     }
 }
-
-
-
 //NavHost(navController, startDestination = "home") {
 //
 //        composable("home") {
@@ -110,7 +103,15 @@ fun AppEntry() {
         "Tarjeta_contacto.vcf",
         "Imagen_duplicada_02.jpg"
     )
-    Scaffold(  bottomBar = { BottomBar(navController = navController) }) { inner ->
+    val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = navBackStackEntry?.destination?.route
+    Scaffold(bottomBar = {
+
+
+        if (currentRoute != Screen.Camara.route ) {
+            BottomBar(navController = navController)
+        }
+    }) { inner ->
         NavHost(
             navController = navController,
             startDestination = Screen.Home.route,
@@ -118,31 +119,46 @@ fun AppEntry() {
         ) {
 
             composable(Screen.Home.route) {
-                HomeScreen (sample,{ dest -> navController.navigate(dest) })
+                HomeScreen(sample, { dest -> navController.navigate(dest) })
             }
             composable(Screen.Archivos.route) {
-                ArchivoView (
+                ArchivoView(
                     irAHome = { navController.navigate(Screen.Archivos.route) },
                     irAPantallaB = { navController.navigate(Screen.Archivos.route) },
                     volver = { navController.popBackStack() }
                 )
             }
             composable(Screen.Camara.route) {
-                CamaraView(
-                    irAHome = { navController.navigate(Screen.Camara.route) },
-                    volver = { navController.popBackStack() }
-                )
+                // Ejemplo de cómo lo llamarías
+DocumentScannerScreen(
+onDocumentScanned = { bitmapResult ->
+    // Aquí recibes el bitmap final.
+    // Puedes navegar hacia atrás y pasar este bitmap a la pantalla anterior,
+    // guardarlo en un ViewModel, o subirlo a un servidor.
+    Log.d("MainActivity", "Bitmap recibido! Tamaño: ${bitmapResult.width}x${bitmapResult.height}")
+
+    // Lógica para volver a la pantalla anterior
+    navController.popBackStack()
+}, onClose = {
+        // Simplemente volvemos a la pantalla anterior
+        navController.popBackStack()
+    }
+)
+//                CamaraView(
+//                    irAHome = { navController.navigate(Screen.Camara.route) },
+//                    volver = { navController.popBackStack() }
+//                )
             }
 
             composable(Screen.Acciones.route) {
-                AccionesView (
+                AccionesView(
                     irAHome = { navController.navigate(Screen.Acciones.route) },
                     volver = { navController.popBackStack() }
                 )
             }
 
             composable(Screen.Usuario.route) {
-                UsuarioView (
+                UsuarioView(
                     irAHome = { navController.navigate(Screen.Usuario.route) },
                     volver = { navController.popBackStack() }
                 )
@@ -158,7 +174,6 @@ fun AppEntry() {
  * - botones con ancho relativo fillMaxWidth(0.7f)
  * - texto con tamaño "aprox" derivado de maxWidth
  */
-
 
 
 /** BottomBar (footer) con items y manejo del estado seleccionado */
@@ -218,15 +233,15 @@ fun BottomBar(navController: androidx.navigation.NavHostController) {
     }
 }
 
-
-
 @Composable
 fun ArchivoView(irAHome: () -> Unit, irAPantallaB: () -> Unit, volver: () -> Unit) {
     val configuration = LocalConfiguration.current
 
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -234,7 +249,9 @@ fun ArchivoView(irAHome: () -> Unit, irAPantallaB: () -> Unit, volver: () -> Uni
         Spacer(modifier = Modifier.height(16.dp))
 
         Spacer(modifier = Modifier.height(8.dp))
-        Button(onClick = volver, modifier = Modifier.fillMaxWidth(0.7f).height(50.dp)) {
+        Button(onClick = volver, modifier = Modifier
+            .fillMaxWidth(0.7f)
+            .height(50.dp)) {
             Text("Volver")
         }
     }
@@ -247,7 +264,9 @@ fun CamaraView(irAHome: () -> Unit, volver: () -> Unit) {
 
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -255,12 +274,13 @@ fun CamaraView(irAHome: () -> Unit, volver: () -> Unit) {
         Spacer(modifier = Modifier.height(16.dp))
 
         Spacer(modifier = Modifier.height(8.dp))
-        Button(onClick = volver, modifier = Modifier.fillMaxWidth(0.7f).height(50.dp)) {
+        Button(onClick = volver, modifier = Modifier
+            .fillMaxWidth(0.7f)
+            .height(50.dp)) {
             Text("Volver")
         }
     }
 }
-
 
 
 @Composable
@@ -268,19 +288,23 @@ fun AccionesView(irAHome: () -> Unit, volver: () -> Unit) {
     val configuration = LocalConfiguration.current
 
 
-        Column(
-            modifier = Modifier.fillMaxSize().padding(16.dp),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text("Acciones", style = MaterialTheme.typography.titleLarge)
-            Spacer(modifier = Modifier.height(16.dp))
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text("Acciones", style = MaterialTheme.typography.titleLarge)
+        Spacer(modifier = Modifier.height(16.dp))
 
-            Spacer(modifier = Modifier.height(8.dp))
-            Button(onClick = volver, modifier = Modifier.fillMaxWidth(0.7f).height(50.dp)) {
-                Text("Volver")
-            }
+        Spacer(modifier = Modifier.height(8.dp))
+        Button(onClick = volver, modifier = Modifier
+            .fillMaxWidth(0.7f)
+            .height(50.dp)) {
+            Text("Volver")
         }
+    }
 
 }
 
@@ -291,7 +315,9 @@ fun UsuarioView(irAHome: () -> Unit, volver: () -> Unit) {
 
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -299,13 +325,13 @@ fun UsuarioView(irAHome: () -> Unit, volver: () -> Unit) {
         Spacer(modifier = Modifier.height(16.dp))
 
         Spacer(modifier = Modifier.height(8.dp))
-        Button(onClick = volver, modifier = Modifier.fillMaxWidth(0.7f).height(50.dp)) {
+        Button(onClick = volver, modifier = Modifier
+            .fillMaxWidth(0.7f)
+            .height(50.dp)) {
             Text("Volver")
         }
     }
 }
-
-
 
 
 //@Composable
