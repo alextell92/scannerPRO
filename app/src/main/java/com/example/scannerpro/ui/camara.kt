@@ -14,7 +14,6 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -56,6 +55,7 @@ import kotlin.math.abs
 // Data class to hold the image and its detected corners
 private data class ImageWithCorners(val bitmap: Bitmap, val corners: List<Point>)
 
+// Top-level value to initialize OpenCV safely once
 private val openCvInitialized = run {
     if (OpenCVLoader.initDebug()) {
         Log.d("OpenCV", "OpenCV initialized successfully.")
@@ -66,6 +66,10 @@ private val openCvInitialized = run {
     }
 }
 
+/**
+ * Main Composable that orchestrates the entire scanning flow.
+ * It manages permissions and navigates between Camera, Crop, and Result views.
+ */
 @OptIn(ExperimentalPermissionsApi::class)
 @Composable
 fun DocumentScannerScreen(
@@ -83,28 +87,32 @@ fun DocumentScannerScreen(
         contract = ActivityResultContracts.GetContent(),
         onResult = { uri: Uri? ->
             uri?.let {
-                val mutableBitmap = uriToBitmap(context, it).copy(Bitmap.Config.ARGB_8888, true)
+                val originalBitmap = uriToBitmap(context, it)
+                val mutableBitmap = originalBitmap.copy(Bitmap.Config.ARGB_8888, true)
                 if (openCvInitialized) {
                     val corners = detectCorners(mutableBitmap)
+                    // --- DEBUG LOG 1 ---
+                    Log.d("ScannerDebug", "Corners detected (Gallery): $corners")
                     imageToCrop = ImageWithCorners(mutableBitmap, corners)
                 }
             }
         }
     )
 
+    // This `when` block acts as a state machine to display the correct view
     when {
         finalBitmap != null -> {
             ResultView(
                 bitmap = finalBitmap!!,
                 onAccept = { onDocumentScanned(it) },
-                onRetry = { finalBitmap = null; imageToCrop = null }
+                onRetry = { finalBitmap = null; imageToCrop = null } // Reset flow
             )
         }
         imageToCrop != null -> {
             CropView(
                 imageWithCorners = imageToCrop!!,
                 onCrop = { croppedBitmap -> finalBitmap = croppedBitmap },
-                onRetry = { imageToCrop = null }
+                onRetry = { imageToCrop = null } // Go back to camera
             )
         }
         cameraPermissionState.status.isGranted -> {
@@ -112,6 +120,8 @@ fun DocumentScannerScreen(
                 onImageCaptured = { bitmap ->
                     if (openCvInitialized) {
                         val corners = detectCorners(bitmap)
+                        // --- DEBUG LOG 2 ---
+                        Log.d("ScannerDebug", "Corners detected (Camera): $corners")
                         imageToCrop = ImageWithCorners(bitmap, corners)
                     }
                 },
@@ -126,6 +136,10 @@ fun DocumentScannerScreen(
     }
 }
 
+/**
+ * The interactive crop view. Displays the image with draggable handles
+ * on the detected corners.
+ */
 @Composable
 private fun CropView(
     imageWithCorners: ImageWithCorners,
@@ -152,14 +166,17 @@ private fun CropView(
         return Point((offset.x * scaleX).toDouble(), (offset.y * scaleY).toDouble())
     }
 
+    // This LaunchedEffect is the key to the auto-detection. It runs whenever the
+    // image or the canvas size changes, ensuring the corners are mapped correctly.
     LaunchedEffect(imageWithCorners, canvasSize) {
         if (canvasSize.width > 0 && canvasSize.height > 0) {
+            // --- DEBUG LOG 3 ---
+            Log.d("ScannerDebug", "CropView recalculating offsets. Canvas: $canvasSize")
             cornerOffsets = imageWithCorners.corners.map { pointToOffset(it) }
         }
     }
 
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        // Mostramos la imagen original a color
         Image(
             bitmap = imageWithCorners.bitmap.asImageBitmap(),
             contentDescription = "Imagen a recortar",
@@ -169,10 +186,17 @@ private fun CropView(
         Canvas(modifier = Modifier.fillMaxSize().pointerInput(Unit) {
             detectDragGestures(
                 onDragStart = { startOffset ->
-                    draggedCornerIndex = cornerOffsets.map { (it - startOffset).getDistanceSquared() }.withIndex().minByOrNull { it.value }?.takeIf { it.value < (handleRadius * 2).let { r -> r * r } }?.index
+                    // Find the corner handle closest to the drag start position
+                    draggedCornerIndex = cornerOffsets
+                        .map { (it - startOffset).getDistanceSquared() }
+                        .withIndex()
+                        .minByOrNull { it.value }
+                        ?.takeIf { it.value < (handleRadius * 2).let { r -> r * r } }
+                        ?.index
                 },
                 onDrag = { change, dragAmount ->
                     draggedCornerIndex?.let { index ->
+                        // Update the position of the dragged corner
                         cornerOffsets = cornerOffsets.toMutableList().apply { set(index, get(index) + dragAmount) }
                     }
                     change.consume()
@@ -180,6 +204,7 @@ private fun CropView(
                 onDragEnd = { draggedCornerIndex = null }
             )
         }) {
+            // Draw only if we have 4 corners
             if (cornerOffsets.size == 4) {
                 val path = androidx.compose.ui.graphics.Path().apply {
                     moveTo(cornerOffsets[0].x, cornerOffsets[0].y)
@@ -191,7 +216,11 @@ private fun CropView(
                 drawPath(path, Color.White.copy(alpha = 0.5f))
 
                 cornerOffsets.forEachIndexed { index, offset ->
-                    drawCircle(color = if (draggedCornerIndex == index) Color.Green else Color.White, center = offset, radius = handleRadius)
+                    drawCircle(
+                        color = if (draggedCornerIndex == index) Color.Green else Color.White,
+                        center = offset,
+                        radius = handleRadius
+                    )
                 }
             }
         }
@@ -212,60 +241,57 @@ private fun CropView(
     }
 }
 
+
+/**
+ * Uses OpenCV to detect the corners of the largest 4-sided contour in the bitmap.
+ */
 private fun detectCorners(bitmap: Bitmap): List<Point> {
     val originalMat = Mat()
     Utils.bitmapToMat(bitmap, originalMat)
-
     val grayMat = Mat(); Imgproc.cvtColor(originalMat, grayMat, Imgproc.COLOR_BGR2GRAY)
     val blurredMat = Mat(); Imgproc.GaussianBlur(grayMat, blurredMat, Size(5.0, 5.0), 0.0)
-    val threshMat = Mat()
-    // Usamos los parámetros que sabemos que funcionan bien para ti
-    Imgproc.adaptiveThreshold(blurredMat, threshMat, 255.0, Imgproc.ADAPTIVE_THRESH_GAUSSIAN_C, Imgproc.THRESH_BINARY, 11, 2.0)
+    // You can tune these Canny thresholds for better edge detection
+    val cannyMat = Mat(); Imgproc.Canny(blurredMat, cannyMat, 75.0, 200.0)
 
     val contours = ArrayList<MatOfPoint>()
-    Imgproc.findContours(threshMat, contours, Mat(), Imgproc.RETR_LIST, Imgproc.CHAIN_APPROX_SIMPLE)
+    Imgproc.findContours(cannyMat, contours, Mat(), Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE)
 
-    var largestContour: MatOfPoint? = null
-    var maxAreaFound = 0.0
-
-    for (contour in contours) {
-        val area = Imgproc.contourArea(contour)
-        if (area > maxAreaFound) {
-            val peri = Imgproc.arcLength(MatOfPoint2f(*contour.toArray()), true)
-            val approx = MatOfPoint2f()
-            Imgproc.approxPolyDP(MatOfPoint2f(*contour.toArray()), approx, 0.02 * peri, true)
-            if (approx.rows() == 4 && area > (bitmap.width * bitmap.height * 0.1)) {
-                largestContour = MatOfPoint(*approx.toArray())
-                maxAreaFound = area
-            }
-        }
+    val largestContour = contours.maxByOrNull { contour: MatOfPoint -> Imgproc.contourArea(contour) }?.let { contour ->
+        val approx = MatOfPoint2f()
+        val peri = Imgproc.arcLength(MatOfPoint2f(*contour.toArray()), true)
+        Imgproc.approxPolyDP(MatOfPoint2f(*contour.toArray()), approx, 0.02 * peri, true)
+        if (approx.rows() == 4) approx else null
     }
 
     if (largestContour != null) {
         return largestContour.toArray().toList()
     }
 
+    // --- DEBUG LOG 4 ---
+    Log.e("ScannerDebug", "OpenCV did NOT find a 4-sided contour. Using default corners.")
     val margin = bitmap.width * 0.1
     return listOf(
-        Point(margin, margin), Point(bitmap.width - margin, margin),
-        Point(bitmap.width - margin, bitmap.height - margin), Point(margin, bitmap.height - margin)
+        Point(margin, margin),
+        Point(bitmap.width - margin, margin),
+        Point(bitmap.width - margin, bitmap.height - margin),
+        Point(margin, bitmap.height - margin)
     )
 }
 
-// --- 👇 LA FUNCIÓN CLAVE CORREGIDA 👇 ---
+/**
+ * Applies a perspective transformation to the bitmap based on the provided corner points.
+ */
 private fun warpPerspective(bitmap: Bitmap, corners: List<Point>): Bitmap {
     val originalMat = Mat()
     Utils.bitmapToMat(bitmap, originalMat)
 
-    // Un método de ordenamiento robusto que no depende del orden inicial
-    val sortedCorners = corners.sortedBy { it.x + it.y }.let {
-        val tl = it.first()
-        val br = it.last()
-        val remaining = corners.filterNot { p -> p == tl || p == br }
-        val tr = remaining.minByOrNull { p -> p.y - p.x }!!
-        val bl = remaining.maxByOrNull { p -> p.y - p.x }!!
-        listOf(tl, tr, br, bl)
-    }
+    // Sort corners: tl, tr, br, bl
+    val sortedCorners = corners.sortedWith(compareBy({ p: Point -> p.y }, { p: Point -> p.x }))
+        .let {
+            val top = it.take(2).sortedBy { p: Point -> p.x }
+            val bottom = it.drop(2).sortedByDescending { p: Point -> p.x }
+            listOf(top[0], top[1], bottom[0], bottom[1])
+        }
 
     val (tl, tr, br, bl) = sortedCorners
 
@@ -279,8 +305,10 @@ private fun warpPerspective(bitmap: Bitmap, corners: List<Point>): Bitmap {
 
     val srcPoints = MatOfPoint2f().apply { fromList(sortedCorners) }
     val dstPoints = MatOfPoint2f(
-        Point(0.0, 0.0), Point(maxWidth - 1, 0.0),
-        Point(maxWidth - 1, maxHeight - 1), Point(0.0, maxHeight - 1)
+        Point(0.0, 0.0),
+        Point(maxWidth - 1, 0.0),
+        Point(maxWidth - 1, maxHeight - 1),
+        Point(0.0, maxHeight - 1)
     )
 
     val transform = Imgproc.getPerspectiveTransform(srcPoints, dstPoints)
@@ -292,8 +320,7 @@ private fun warpPerspective(bitmap: Bitmap, corners: List<Point>): Bitmap {
     return resultBitmap
 }
 
-
-
+// region Boilerplate Composables (Permission, Camera, Result, etc.)
 
 @Composable
 private fun ResultView(bitmap: Bitmap, onAccept: (Bitmap) -> Unit, onRetry: () -> Unit) {
@@ -325,30 +352,43 @@ private fun CameraView(
             factory = { ctx ->
                 val previewView = PreviewView(ctx)
                 val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
+
                 cameraProviderFuture.addListener({
                     val cameraProvider = cameraProviderFuture.get()
-                    val preview = Preview.Builder().build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
+                    val preview = Preview.Builder().build().also {
+                        it.setSurfaceProvider(previewView.surfaceProvider)
+                    }
                     imageCapture = ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY).build()
                     val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+
                     try {
                         cameraProvider.unbindAll()
                         cameraProvider.bindToLifecycle(lifecycleOwner, cameraSelector, preview, imageCapture)
-                    } catch (exc: Exception) { Log.e("CameraView", "Fallo al vincular casos de uso", exc) }
+                    } catch (exc: Exception) {
+                        Log.e("CameraView", "Use case binding failed", exc)
+                    }
                 }, ContextCompat.getMainExecutor(ctx))
                 previewView
             },
             modifier = Modifier.fillMaxSize()
         )
+
         IconButton(onClick = onCloseClick, modifier = Modifier.align(Alignment.TopEnd).padding(16.dp)) {
             Icon(Icons.Filled.Close, contentDescription = "Cerrar", tint = Color.White)
         }
+
         Row(
             modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter).padding(16.dp),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onGalleryClick) {
-                Icon(painter = painterResource(id = R.drawable.galeria), contentDescription = "Galería", tint = Color.White, modifier = Modifier.size(40.dp))
+                Icon(
+                    painter = painterResource(id = R.drawable.galeria), // Reemplaza con tu icono
+                    contentDescription = "Galería",
+                    tint = Color.White,
+                    modifier = Modifier.size(40.dp)
+                )
             }
             IconButton(
                 onClick = {
