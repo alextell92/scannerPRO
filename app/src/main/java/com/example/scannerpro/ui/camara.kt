@@ -1,3 +1,4 @@
+
 package com.example.scannerpro.ui
 
 import android.content.ContentValues
@@ -52,18 +53,17 @@ import org.opencv.core.MatOfPoint2f
 import org.opencv.core.Point
 import org.opencv.core.Size
 import org.opencv.imgproc.Imgproc
-import org.opencv.imgproc.Imgproc.threshold
 import java.io.OutputStream
 import kotlin.math.abs
 import kotlin.math.acos
 import kotlin.math.atan2
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.pow
 import kotlin.math.sqrt
 
 // Data class to hold the image and its detected corners
 private data class ImageWithCorners(val bitmap: Bitmap, val corners: List<Point>)
-
-
-
 
 // Top-level value to initialize OpenCV safely once
 private val openCvInitialized = run {
@@ -100,7 +100,7 @@ fun DocumentScannerScreen(
                 val originalBitmap = uriToBitmap(context, it)
                 val mutableBitmap = originalBitmap.copy(Bitmap.Config.ARGB_8888, true)
                 if (openCvInitialized) {
-                    val corners = detectCorners(mutableBitmap,context)
+                    val corners = detectCorners(mutableBitmap, context)
                     // --- DEBUG LOG 1 ---
                     Log.d("ScannerDebug", "Corners detected (Gallery): $corners")
                     imageToCrop = ImageWithCorners(mutableBitmap, corners)
@@ -129,7 +129,7 @@ fun DocumentScannerScreen(
             CameraView(
                 onImageCaptured = { bitmap ->
                     if (openCvInitialized) {
-                        val corners = detectCorners(bitmap,context)
+                        val corners = detectCorners(bitmap, context)
                         // --- DEBUG LOG 2 ---
                         Log.d("ScannerDebug", "Corners detected (Camera): $corners")
                         imageToCrop = ImageWithCorners(bitmap, corners)
@@ -251,110 +251,160 @@ private fun CropView(
     }
 }
 
-
 /**
  * Uses OpenCV to detect the corners of the largest 4-sided contour in the bitmap.
  */
-private fun detectCorners(bitmap: Bitmap, context: Context): List<Point> {
-    val originalMat = Mat()
-    Utils.bitmapToMat(bitmap, originalMat)
-    val imageWidth = originalMat.width().toDouble()
-    val imageHeight = originalMat.height().toDouble()
+// Helper function for distance
+private fun distance(p1: Point, p2: Point): Double {
+    return sqrt((p1.x - p2.x).pow(2) + (p1.y - p2.y).pow(2))
+}
 
-    // --- PRE-PROCESAMIENTO ---
+private fun detectCorners(bitmap: Bitmap, context: Context): List<Point> {
+    // Add downscaling for processing efficiency and noise reduction
+    val downscaledBitmap = downscaleBitmap(bitmap, 1000)  // Max dimension 1000px
+    val scaleX = bitmap.width.toDouble() / downscaledBitmap.width
+    val scaleY = bitmap.height.toDouble() / downscaledBitmap.height
+
+    val originalMat = Mat()
+    Utils.bitmapToMat(downscaledBitmap, originalMat)
+
+    // --- PRE-PROCESAMIENTO (Adjusted for better edge preservation) ---
     val grayMat = Mat()
     Imgproc.cvtColor(originalMat, grayMat, Imgproc.COLOR_BGR2GRAY)
+
+    // Improve contrast with histogram equalization
+    Imgproc.equalizeHist(grayMat, grayMat)
+
     val blurredMat = Mat()
-    Imgproc.GaussianBlur(grayMat, blurredMat, Size(5.0, 5.0), 0.0)
+    Imgproc.GaussianBlur(grayMat, blurredMat, Size(3.0, 3.0), 0.0)  // Reduced blur
+
+    // Adaptive Canny thresholds
+    val median = Mat()
+    Imgproc.medianBlur(grayMat, median, 5)
+    val medianVal = median.get(median.rows() / 2, median.cols() / 2)[0]
+    val lowThreshold = max(20.0, 0.66 * medianVal)
+    val highThreshold = min(255.0, 1.33 * medianVal)
+
     val cannyMat = Mat()
-    Imgproc.Canny(blurredMat, cannyMat, 50.0, 150.0)
-    // --- FIN ---
+    Imgproc.Canny(blurredMat, cannyMat, lowThreshold, highThreshold)
 
-    // --- DETECCIÓN DE LÍNEAS (MÉTODO ÚNICO) ---
-    val lines = Mat()
-    Imgproc.HoughLinesP(cannyMat, lines, 1.0, Math.PI / 180, 80, imageWidth / 4, 20.0)
+    val kernel = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(5.0, 5.0))
+    val dilatedMat = Mat()
+    Imgproc.dilate(cannyMat, dilatedMat, kernel)
+    Imgproc.erode(dilatedMat, dilatedMat, kernel)  // Added erosion to clean noise
 
-    if (lines.rows() > 10) { // Necesitamos un número razonable de líneas para promediar
-        val horizontalLines = mutableListOf<DoubleArray>()
-        val verticalLines = mutableListOf<DoubleArray>()
+    // Save intermediate for debugging
+    saveBitmapToGallery(context, matToBitmap(cannyMat), "canny_debug.jpg")
+    saveBitmapToGallery(context, matToBitmap(dilatedMat), "dilated_debug.jpg")
 
-        for (i in 0 until lines.rows()) {
-            val line = lines.get(i, 0)
-            val p1 = Point(line[0], line[1])
-            val p2 = Point(line[2], line[3])
-            val angle = Math.toDegrees(atan2(p2.y - p1.y, p2.x - p1.x))
+    // --- INTENTO 1: CONTORNOS CON VALIDACIÓN FÍSICA ESTRICTA (Improved) ---
+    val contours = ArrayList<MatOfPoint>()
+    val hierarchy = Mat()
+    Imgproc.findContours(dilatedMat, contours, hierarchy, Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE)
 
-            if (abs(angle) < 45 || abs(angle - 180) < 45) {
-                horizontalLines.add(line)
-            } else if (abs(abs(angle) - 90) < 45) {
-                verticalLines.add(line)
-            }
+    Log.d("ScannerDebug", "Número de contornos encontrados: ${contours.size}")
+
+    val bestCandidate = contours
+        .mapNotNull { contour ->
+            val approx = MatOfPoint2f()
+            val peri = Imgproc.arcLength(MatOfPoint2f(*contour.toArray()), true)
+            Imgproc.approxPolyDP(MatOfPoint2f(*contour.toArray()), approx, 0.02 * peri, true)
+            // Solo nos interesan los cuadriláteros
+            if (approx.rows() == 4) approx else null
         }
+        .maxByOrNull { Imgproc.contourArea(it) } // Tomamos el más grande como candidato principal
 
-        // --- CLUSTERING Y PROMEDIADO DE LÍNEAS ---
-        if (horizontalLines.size >= 2 && verticalLines.size >= 2) {
-            // Cluster "Top" y "Bottom"
-            val topCluster = horizontalLines.filter { (it[1] + it[3]) / 2 < imageHeight / 2 }
-            val bottomCluster = horizontalLines.filter { (it[1] + it[3]) / 2 > imageHeight / 2 }
-            // Cluster "Left" y "Right"
-            val leftCluster = verticalLines.filter { (it[0] + it[2]) / 2 < imageWidth / 2 }
-            val rightCluster = verticalLines.filter { (it[0] + it[2]) / 2 > imageWidth / 2 }
+    if (bestCandidate != null) {
+        val points = sortPointsClockwise(bestCandidate.toArray())
 
-            if (topCluster.isNotEmpty() && bottomCluster.isNotEmpty() && leftCluster.isNotEmpty() && rightCluster.isNotEmpty()) {
-                // Calcula la línea promedio para cada cluster
-                val avgTop = topCluster.flatMap { listOf(Point(it[0], it[1]), Point(it[2], it[3])) }.let { points ->
-                    val avgY = points.map { it.y }.average()
-                    doubleArrayOf(0.0, avgY, imageWidth, avgY)
-                }
-                val avgBottom = bottomCluster.flatMap { listOf(Point(it[0], it[1]), Point(it[2], it[3])) }.let { points ->
-                    val avgY = points.map { it.y }.average()
-                    doubleArrayOf(0.0, avgY, imageWidth, avgY)
-                }
-                val avgLeft = leftCluster.flatMap { listOf(Point(it[0], it[1]), Point(it[2], it[3])) }.let { points ->
-                    val avgX = points.map { it.x }.average()
-                    doubleArrayOf(avgX, 0.0, avgX, imageHeight)
-                }
-                val avgRight = rightCluster.flatMap { listOf(Point(it[0], it[1]), Point(it[2], it[3])) }.let { points ->
-                    val avgX = points.map { it.x }.average()
-                    doubleArrayOf(avgX, 0.0, avgX, imageHeight)
-                }
+        // --- LA VALIDACIÓN FINAL Y DEFINITIVA (Relaxed symmetry, added angle check) ---
+        val (tl, tr, br, bl) = points
 
-                // Calcula las intersecciones de las líneas promedio
-                val tl = computeIntersection(Point(avgTop[0], avgTop[1]), Point(avgTop[2], avgTop[3]), Point(avgLeft[0], avgLeft[1]), Point(avgLeft[2], avgLeft[3]))
-                val tr = computeIntersection(Point(avgTop[0], avgTop[1]), Point(avgTop[2], avgTop[3]), Point(avgRight[0], avgRight[1]), Point(avgRight[2], avgRight[3]))
-                val bl = computeIntersection(Point(avgBottom[0], avgBottom[1]), Point(avgBottom[2], avgBottom[3]), Point(avgLeft[0], avgLeft[1]), Point(avgLeft[2], avgLeft[3]))
-                val br = computeIntersection(Point(avgBottom[0], avgBottom[1]), Point(avgBottom[2], avgBottom[3]), Point(avgRight[0], avgRight[1]), Point(avgRight[2], avgRight[3]))
+        // Calculamos las longitudes de los lados
+        val topWidth = distance(tl, tr)
+        val bottomWidth = distance(bl, br)
+        val leftHeight = distance(tl, bl)
+        val rightHeight = distance(tr, br)
 
-                val corners = listOf(tl, tr, bl, br)
-                if (corners.all { it.x >= 0 && it.y >= 0 }) {
-                    Log.d("ScannerDebug", "¡ÉXITO DEFINITIVO! Detección por Promedio de Líneas.")
-                    Toast.makeText(context, "Detección por Promedio", Toast.LENGTH_SHORT).show()
-                    return sortPointsClockwise(corners.toTypedArray())
-                }
-            }
+        // Regla 1: Las proporciones deben ser lógicas (evita formas extremas)
+        val aspectRatio = maxOf(topWidth, bottomWidth) / maxOf(leftHeight, rightHeight)
+        val aspectRatioIsGood = aspectRatio > 0.5 && aspectRatio < 2.5 // Rango generoso
+
+        // Regla 2: Los lados opuestos deben ser de tamaño similar (simetría, relaxed to 30%)
+        val widthSymmetry = abs(topWidth - bottomWidth) / maxOf(topWidth, bottomWidth) < 0.30
+        val heightSymmetry = abs(leftHeight - rightHeight) / maxOf(leftHeight, rightHeight) < 0.30
+
+        // Regla 3: Ángulos cercanos a 90° con tolerancia
+        val angles = listOf(
+            calculateAngle(tr, bl, tl),  // Ángulo en tl
+            calculateAngle(tl, br, tr),  // en tr
+            calculateAngle(tr, bl, br),  // en br
+            calculateAngle(tl, br, bl)   // en bl
+        )
+        val anglesAreGood = angles.all { abs(it - 90.0) < 30.0 }
+
+        if (aspectRatioIsGood && widthSymmetry && heightSymmetry && anglesAreGood) {
+            Log.d("ScannerDebug", "Éxito con Contornos (Validación Física).")
+            Toast.makeText(context, "Plan A: Detección Válida", Toast.LENGTH_SHORT).show()
+            // Scale points back to original size
+            return points.map { Point(it.x * scaleX, it.y * scaleY) }
         }
     }
 
-    // --- FALLBACK FINAL ---
-    Log.e("ScannerDebug", "El método de promedio de líneas falló. Usando esquinas por defecto.")
-    Toast.makeText(context, "No se pudo detectar, ajusta manualmente", Toast.LENGTH_LONG).show()
-    val margin = bitmap.width * 0.1
-    return listOf(
-        Point(margin, margin),
-        Point(bitmap.width - margin, margin),
-        Point(bitmap.width - margin, bitmap.height - margin),
-        Point(margin, bitmap.height - margin)
-    )
+    // --- INTENTO 2: HOUGH LINES (Optimized parameters) ---
+    Log.w("ScannerDebug", "Plan A falló la validación. Activando Plan B: Hough Lines.")
+    val houghCorners = findCornersWithHoughLines(cannyMat)
+    if (houghCorners != null) {
+        Log.d("ScannerDebug", "Éxito con el Método de Hough Lines.")
+        Toast.makeText(context, "Plan B: Detección por Líneas", Toast.LENGTH_SHORT).show()
+        // Scale points back to original size
+        return sortPointsClockwise(houghCorners.toTypedArray()).map { Point(it.x * scaleX, it.y * scaleY) }
+    }
+
+    // --- FALLBACK FINAL (Improved: Second pass with different parameters) ---
+    Log.w("ScannerDebug", "Plan B falló. Activando Fallback con parámetros alternos.")
+    val fallbackCorners = fallbackDetectCorners(downscaledBitmap, context)
+    if (fallbackCorners != null) {
+        return fallbackCorners.map { Point(it.x * scaleX, it.y * scaleY) }
+    }
+
+    // Ultimate default
+    return getDefaultCorners(bitmap)
 }
 
-// Asegúrate de que tus funciones de ayuda 'computeIntersection' y 'sortPointsClockwise' sigan en el archivo.
-// Asegúrate que tu findCornersWithHoughLines y otras funciones de ayuda sigan en el archivo
+/**
+ * Fallback detection with different pre-processing parameters.
+ */
+private fun fallbackDetectCorners(bitmap: Bitmap, context: Context): List<Point>? {
+    val originalMat = Mat()
+    Utils.bitmapToMat(bitmap, originalMat)
 
+    val grayMat = Mat()
+    Imgproc.cvtColor(originalMat, grayMat, Imgproc.COLOR_BGR2GRAY)
 
-// **IMPORTANTE**: Actualizar la firma de findCornersWithHoughLines
-private fun findCornersWithHoughLines(processedMat: Mat, threshold: Int, minLineLength: Double, maxLineGap: Double): List<Point>? {
+    // More aggressive blur and lower Canny for fallback
+    val blurredMat = Mat()
+    Imgproc.GaussianBlur(grayMat, blurredMat, Size(5.0, 5.0), 0.0)
+
+    val cannyMat = Mat()
+    Imgproc.Canny(blurredMat, cannyMat, 30.0, 100.0)  // Lower thresholds
+
+    val kernel = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(5.0, 5.0))
+    val dilatedMat = Mat()
+    Imgproc.dilate(cannyMat, dilatedMat, kernel)
+    Imgproc.erode(dilatedMat, dilatedMat, kernel)
+
+    // Use findBestContour logic
+    return findBestContour(dilatedMat, bitmap)
+}
+
+/**
+ * Optimized Hough Lines detection.
+ */
+private fun findCornersWithHoughLines(cannyMat: Mat): List<Point>? {
     val lines = Mat()
-    Imgproc.HoughLinesP(processedMat, lines, 1.0, Math.PI / 180, threshold, minLineLength, maxLineGap)
+    // Optimized parameters: lower threshold, more flexible minLineLength
+    Imgproc.HoughLinesP(cannyMat, lines, 1.0, Math.PI / 180, 50, cannyMat.width() / 4.0, 20.0)
 
     if (lines.rows() < 4) return null
 
@@ -366,7 +416,6 @@ private fun findCornersWithHoughLines(processedMat: Mat, threshold: Int, minLine
         val p1 = Point(line[0], line[1])
         val p2 = Point(line[2], line[3])
         val angle = Math.toDegrees(atan2(p2.y - p1.y, p2.x - p1.x))
-
         if (abs(angle) < 45 || abs(angle - 180) < 45) {
             horizontalLines.add(line)
         } else if (abs(abs(angle) - 90) < 45) {
@@ -376,10 +425,10 @@ private fun findCornersWithHoughLines(processedMat: Mat, threshold: Int, minLine
 
     if (horizontalLines.size < 2 || verticalLines.size < 2) return null
 
-    val top = horizontalLines.minByOrNull { (it[1] + it[3]) / 2 } ?: return null
-    val bottom = horizontalLines.maxByOrNull { (it[1] + it[3]) / 2 } ?: return null
-    val left = verticalLines.minByOrNull { (it[0] + it[2]) / 2 } ?: return null
-    val right = verticalLines.maxByOrNull { (it[0] + it[2]) / 2 } ?: return null
+    val top = horizontalLines.minByOrNull { (it[1] + it[3]) / 2 }!!
+    val bottom = horizontalLines.maxByOrNull { (it[1] + it[3]) / 2 }!!
+    val left = verticalLines.minByOrNull { (it[0] + it[2]) / 2 }!!
+    val right = verticalLines.maxByOrNull { (it[0] + it[2]) / 2 }!!
 
     val tl = computeIntersection(Point(top[0], top[1]), Point(top[2], top[3]), Point(left[0], left[1]), Point(left[2], left[3]))
     val tr = computeIntersection(Point(top[0], top[1]), Point(top[2], top[3]), Point(right[0], right[1]), Point(right[2], right[3]))
@@ -387,17 +436,67 @@ private fun findCornersWithHoughLines(processedMat: Mat, threshold: Int, minLine
     val br = computeIntersection(Point(bottom[0], bottom[1]), Point(bottom[2], bottom[3]), Point(right[0], right[1]), Point(right[2], right[3]))
 
     val corners = listOf(tl, tr, bl, br)
-
-    // Validamos que todas las esquinas se hayan encontrado
-    if (corners.any { it.x < 0 || it.y < 0 }) return null
-
-    return sortPointsClockwise(corners.toTypedArray())
+    return if (corners.all { it.x != -1.0 }) {
+        corners
+    } else {
+        null
+    }
 }
-// Asegúrate de que calculateAngle y computeIntersection estén correctos
-// ... (resto de tus funciones auxiliares) ...
 
+/**
+ * Crea una lista de 4 puntos de esquina por defecto que forman un rectángulo
+ * con un margen del 10% respecto a los bordes de la imagen.
+ *
+ * @param bitmap El bitmap original para obtener las dimensiones.
+ * @return Una lista de 4 `Point` representando las esquinas por defecto.
+ */
+private fun getDefaultCorners(bitmap: Bitmap): List<Point> {
+    // Calculamos un margen del 10% del ancho de la imagen.
+    val margin = bitmap.width * 0.1
 
-// También actualiza la firma de findCornersWithHoughLines para aceptar el umbral
+    // Devolvemos las 4 esquinas del rectángulo centrado.
+    return listOf(
+        Point(margin, margin), // Esquina Superior Izquierda
+        Point(bitmap.width - margin, margin), // Esquina Superior Derecha
+        Point(bitmap.width - margin, bitmap.height - margin), // Esquina Inferior Derecha
+        Point(margin, bitmap.height - margin) // Esquina Inferior Izquierda
+    )
+}
+
+// Helper for best contour
+private fun findBestContour(processedMat: Mat, originalBitmap: Bitmap): List<Point>? {
+    val contours = ArrayList<MatOfPoint>()
+    Imgproc.findContours(processedMat, contours, Mat(), Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE)
+
+    val bestCandidate = contours
+        .mapNotNull { contour ->
+            val approx = MatOfPoint2f()
+            val peri = Imgproc.arcLength(MatOfPoint2f(*contour.toArray()), true)
+            Imgproc.approxPolyDP(MatOfPoint2f(*contour.toArray()), approx, 0.02 * peri, true)
+            if (approx.rows() == 4) approx else null
+        }
+        .filter { Imgproc.contourArea(it) > (originalBitmap.width * originalBitmap.height / 10) }
+        .maxByOrNull { Imgproc.contourArea(it) }
+
+    return bestCandidate?.let { sortPointsClockwise(it.toArray()) }
+}
+
+private fun downscaleBitmap(bitmap: Bitmap, maxDimension: Int): Bitmap {
+    val originalWidth = bitmap.width
+    val originalHeight = bitmap.height
+    val largerDimension = maxOf(originalWidth, originalHeight)
+
+    if (largerDimension <= maxDimension) {
+        return bitmap
+    }
+
+    val scaleFactor = maxDimension.toFloat() / largerDimension
+    val newWidth = (originalWidth * scaleFactor).toInt()
+    val newHeight = (originalHeight * scaleFactor).toInt()
+
+    return Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true)
+}
+
 /**
  * Applies a perspective transformation to the bitmap based on the provided corner points.
  */
@@ -438,6 +537,24 @@ private fun warpPerspective(bitmap: Bitmap, corners: List<Point>): Bitmap {
     val resultBitmap = Bitmap.createBitmap(dstMat.cols(), dstMat.rows(), Bitmap.Config.ARGB_8888)
     Utils.matToBitmap(dstMat, resultBitmap)
     return resultBitmap
+}
+
+private fun sortPointsClockwise(points: Array<Point>): List<Point> {
+    // Ordena por la suma de coordenadas (y+x).
+    // El punto con la menor suma es el superior-izquierdo (top-left).
+    points.sortBy { it.x + it.y }
+    val tl = points[0]
+    // El punto con la mayor suma es el inferior-derecho (bottom-right).
+    val br = points[3]
+
+    // Ordena por la diferencia de coordenadas (y-x).
+    // El punto con la menor diferencia es el superior-derecho (top-right).
+    points.sortBy { it.y - it.x }
+    val tr = points[0]
+    // El punto con la mayor diferencia es el inferior-izquierdo (bottom-left).
+    val bl = points[3]
+
+    return listOf(tl, tr, br, bl)
 }
 
 // region Boilerplate Composables (Permission, Camera, Result, etc.)
@@ -556,15 +673,11 @@ private fun uriToBitmap(context: Context, uri: Uri): Bitmap {
     }
 }
 
-
-
 fun matToBitmap(mat: Mat): Bitmap {
     val bmp = Bitmap.createBitmap(mat.cols(), mat.rows(), Bitmap.Config.ARGB_8888)
     Utils.matToBitmap(mat, bmp)
     return bmp
 }
-
-
 
 /**
  * Guarda un Bitmap en la galería del dispositivo.
@@ -604,54 +717,6 @@ fun saveBitmapToGallery(context: Context, bitmap: Bitmap, displayName: String) {
     }
 }
 
-
-
-private fun findCornersWithHoughLines(cannyMat: Mat,threshold: Int): List<Point>? {
-    val lines = Mat()
-    // Ejecuta la Transformada de Hough para detectar líneas
-    Imgproc.HoughLinesP(cannyMat, lines, 1.0, Math.PI / 180, threshold, cannyMat.width() / 3.0, 15.0)
-
-    if (lines.rows() < 4) return null // No hay suficientes líneas para formar un rectángulo
-
-    val horizontalLines = mutableListOf<DoubleArray>()
-    val verticalLines = mutableListOf<DoubleArray>()
-
-    // Separa las líneas en horizontales y verticales
-    for (i in 0 until lines.rows()) {
-        val line = lines.get(i, 0)
-        val p1 = Point(line[0], line[1])
-        val p2 = Point(line[2], line[3])
-        val angle = atan2(p2.y - p1.y, p2.x - p1.x) * 180 / Math.PI
-        if (abs(angle) < 45) { // Horizontales
-            horizontalLines.add(line)
-        } else { // Verticales
-            verticalLines.add(line)
-        }
-    }
-
-    if (horizontalLines.size < 2 || verticalLines.size < 2) return null
-
-    // Encuentra las 4 líneas de los bordes (top, bottom, left, right)
-    val top = horizontalLines.minByOrNull { it[1] + it[3] }!!
-    val bottom = horizontalLines.maxByOrNull { it[1] + it[3] }!!
-    val left = verticalLines.minByOrNull { it[0] + it[2] }!!
-    val right = verticalLines.maxByOrNull { it[0] + it[2] }!!
-
-    // Calcula las 4 esquinas donde se intersectan estas líneas
-    val tl = computeIntersection(Point(top[0], top[1]), Point(top[2], top[3]), Point(left[0], left[1]), Point(left[2], left[3]))
-    val tr = computeIntersection(Point(top[0], top[1]), Point(top[2], top[3]), Point(right[0], right[1]), Point(right[2], right[3]))
-    val bl = computeIntersection(Point(bottom[0], bottom[1]), Point(bottom[2], bottom[3]), Point(left[0], left[1]), Point(left[2], left[3]))
-    val br = computeIntersection(Point(bottom[0], bottom[1]), Point(bottom[2], bottom[3]), Point(right[0], right[1]), Point(right[2], right[3]))
-
-    // Si todas las esquinas son válidas, devuelve la lista
-    return if (listOf(tl, tr, bl, br).all { it.x != -1.0 }) {
-        listOf(tl, tr, br, bl)
-    } else {
-        null
-    }
-}
-
-
 // Calcula el punto de intersección entre dos líneas representadas por 4 puntos
 private fun computeIntersection(p1: Point, p2: Point, p3: Point, p4: Point): Point {
     val d = (p1.x - p2.x) * (p3.y - p4.y) - (p1.y - p2.y) * (p3.x - p4.x)
@@ -667,7 +732,6 @@ private fun computeIntersection(p1: Point, p2: Point, p3: Point, p4: Point): Poi
     }
 }
 
-
 private fun calculateAngle(pt1: Point, pt2: Point, pt0: Point): Double {
     val dx1 = pt1.x - pt0.x
     val dy1 = pt1.y - pt0.y
@@ -681,54 +745,3 @@ private fun calculateAngle(pt1: Point, pt2: Point, pt0: Point): Double {
     val angleRad = acos(dotProduct / (mag1 * mag2))
     return angleRad * 180.0 / Math.PI
 }
-
-
-private fun sortPointsClockwise(points: Array<Point>): List<Point> {
-    // Ordena por la suma de coordenadas (y+x).
-    // El punto con la menor suma es el superior-izquierdo.
-    // El punto con la mayor suma es el inferior-derecho.
-    points.sortBy { it.x + it.y }
-    val tl = points[0]
-    val br = points[3]
-
-    // Ordena por la diferencia de coordenadas (y-x).
-    // El punto con la menor diferencia es el superior-derecho.
-    // El punto con la mayor diferencia es el inferior-izquierdo.
-    points.sortBy { it.y - it.x }
-    val tr = points[0]
-    val bl = points[3]
-
-    return listOf(tl, tr, br, bl)
-}
-
-//@Composable
-//fun CameraScreen() {
-//    val context = LocalContext.current
-//    val cameraProviderFuture = remember { ProcessCameraProvider.getInstance(context) }
-//    remember { Executors.newSingleThreadExecutor() }
-//
-//    AndroidView(
-//        factory = { ctx ->
-//            val previewView = PreviewView(ctx)
-//            cameraProviderFuture.addListener({
-//                val cameraProvider = cameraProviderFuture.get()
-//                val preview = androidx.camera.core.Preview.Builder().build().also {
-//                    it.surfaceProvider = previewView.surfaceProvider
-//                }
-//                val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
-//                cameraProvider.unbindAll()
-//                cameraProvider.bindToLifecycle(
-//                    ctx as androidx.lifecycle.LifecycleOwner,
-//                    cameraSelector,
-//                    preview
-//                )
-//            }, ContextCompat.getMainExecutor(ctx))
-//            previewView
-//        },
-//        modifier = Modifier
-//    )
-//}
-
-
-
-
