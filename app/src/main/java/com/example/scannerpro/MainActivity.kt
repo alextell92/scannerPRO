@@ -2,7 +2,9 @@
 
 package com.example.scannerpro
 
+//import DocumentScannerScreen
 import DocumentScannerScreen
+//import SimpleCannyDetectorScreen
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -67,7 +69,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             // Entrada de aplicacion
             AppEntry()
-
+            //SimpleCannyDetectorScreen()
         }
     }
 }
@@ -111,21 +113,20 @@ fun AppEntry() {
             }
             composable(Screen.Camara.route) {
 //                // Ejemplo de cómo lo llamarías
-                DocumentScannerScreen(onDocumentScanned = { bitmapResult ->
-                    // Aquí recibes el bitmap final.
-                    // Puedes navejar hacia atrás y pasar este bitmap a la pantalla anterior,
-                    // guardarlo en un ViewModel, o subirlo a un servidor.
-                    Log.d(
-                        "MainActivity",
-                        "Bitmap recibido! Tamaño: ${bitmapResult.width}x${bitmapResult.height}"
-                    )
+                DocumentScannerScreen(
+                    onProcessingComplete = { bitmapResult ->
+                        // Aquí recibes el bitmap final con el contorno dibujado.
+                        // Puedes navegas hacia atrás y pasar este bitmap a la pantalla anterior,
+                        // guardarlo en un ViewModel, o subirlo a un servidor.
+                        Log.d(
+                            "MainActivity",
+                            "Bitmap procesado recibido! Tamaño: ${bitmapResult.width}x${bitmapResult.height}"
+                        )
 
-                    // Opcional: Pasar el bitmap de vuelta usando argumentos de navegación si es necesario
-                    // navController.previousBackStackEntry?.savedStateHandle?.set("scannedBitmap", bitmapResult)
-
-                    // Lógica para volver a la pantalla anterior
-                    navController.popBackStack()
-                }, onClose = {
+                        // Lógica para volver a la pantalla anterior
+                        navController.popBackStack()
+                    },
+                 onClose = {
                     // Simplemente volvemos a la pantalla anterior
                     navController.popBackStack()
                 })
