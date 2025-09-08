@@ -47,7 +47,7 @@ fun HomeScreen(  scannedItems: List<String>,
     // Usamos LocalConfiguration para obtener screenWidthDp / screenHeightDp (enteros)
     val configuration = LocalConfiguration.current
     val screenW = configuration.screenWidthDp.toFloat()   // ancho en dp (Float)
-    val screenH = configuration.screenHeightDp.toFloat()  // alto en dp (Float)
+    configuration.screenHeightDp.toFloat()  // alto en dp (Float)
 
     // tamaño de fuente calculado respecto al ancho (en sp)
     val titleFont = (screenW * 0.07f).coerceIn(14f, 34f).sp

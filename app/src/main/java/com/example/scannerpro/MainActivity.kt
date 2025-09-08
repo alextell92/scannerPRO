@@ -2,6 +2,11 @@
 
 package com.example.scannerpro
 
+//import DocumentScanner
+//import DocumentScannerComponent
+//import DocumentScannerScreen
+import SimpleCannyDetectorScreen
+//import SimpleCannyDetectorScreen
 import android.graphics.pdf.content.PdfPageGotoLinkContent
 import android.os.Bundle
 import android.util.Log
@@ -51,8 +56,9 @@ import androidx.navigation.compose.rememberNavController
 //import com.example.scannerpro.ui.Testvista
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.currentBackStackEntryAsState
-import com.example.scannerpro.ui.DocumentScannerScreen
+
 import com.example.scannerpro.ui.HomeScreen
+import org.opencv.android.OpenCVLoader
 
 sealed class Screen(val route: String) {
     object Home : Screen("home")
@@ -71,10 +77,20 @@ data class BottomNavItem(@DrawableRes val iconRes: Int, val screen: Screen, val 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // --- 1. INICIAR OPENCV ---
+        // Debes cargar la biblioteca nativa antes de usar cualquier función.
+        if (OpenCVLoader.initDebug()) {
+            Log.d("OpenCV", "OpenCV se ha cargado exitosamente.")
+        } else {
+            Log.e("OpenCV", "¡Error al cargar OpenCV!")
+            // En una app real, deberías manejar este error
+        }
+
         enableEdgeToEdge()
         setContent {
             // Entrada de aplicacion
-            AppEntry()
+           // AppEntry()
+            SimpleCannyDetectorScreen()
         }
     }
 }
@@ -129,26 +145,29 @@ fun AppEntry() {
                 )
             }
             composable(Screen.Camara.route) {
-                // Ejemplo de cómo lo llamarías
-DocumentScannerScreen(
-onDocumentScanned = { bitmapResult ->
-    // Aquí recibes el bitmap final.
-    // Puedes navegar hacia atrás y pasar este bitmap a la pantalla anterior,
-    // guardarlo en un ViewModel, o subirlo a un servidor.
-    Log.d("MainActivity", "Bitmap recibido! Tamaño: ${bitmapResult.width}x${bitmapResult.height}")
-
-    // Lógica para volver a la pantalla anterior
-    navController.popBackStack()
-}, onClose = {
-        // Simplemente volvemos a la pantalla anterior
-        navController.popBackStack()
-    }
-)
-//                CamaraView(
-//                    irAHome = { navController.navigate(Screen.Camara.route) },
-//                    volver = { navController.popBackStack() }
-//                )
-            }
+//                // Ejemplo de cómo lo llamarías
+//                SimpleCannyDetectorScreen(
+//                    onDocumentScanned = { bitmapResult ->
+//                        // Aquí recibes el bitmap final.
+//                        // Puedes navejar hacia atrás y pasar este bitmap a la pantalla anterior,
+//                        // guardarlo en un ViewModel, o subirlo a un servidor.
+//                        Log.d("MainActivity", "Bitmap recibido! Tamaño: ${bitmapResult.width}x${bitmapResult.height}")
+//
+//                        // Opcional: Pasar el bitmap de vuelta usando argumentos de navegación si es necesario
+//                        // navController.previousBackStackEntry?.savedStateHandle?.set("scannedBitmap", bitmapResult)
+//
+//                        // Lógica para volver a la pantalla anterior
+//                        navController.popBackStack()
+//}, onClose = {
+//        // Simplemente volvemos a la pantalla anterior
+//        navController.popBackStack()
+//    }
+//)
+////                CamaraView(
+////                    irAHome = { navController.navigate(Screen.Camara.route) },
+////                    volver = { navController.popBackStack() }
+////                )
+          }
 
             composable(Screen.Acciones.route) {
                 AccionesView(
@@ -187,7 +206,7 @@ fun BottomBar(navController: androidx.navigation.NavHostController) {
         BottomNavItem(R.drawable.perfil, Screen.Usuario, "Usuario")
     )
     val navBackStackEntry by navController.currentBackStackEntryAsState()
-    val currentDestination = navBackStackEntry?.destination
+    navBackStackEntry?.destination
     val currentRoute = navBackStackEntry?.destination?.route
 
     NavigationBar {
@@ -235,7 +254,7 @@ fun BottomBar(navController: androidx.navigation.NavHostController) {
 
 @Composable
 fun ArchivoView(irAHome: () -> Unit, irAPantallaB: () -> Unit, volver: () -> Unit) {
-    val configuration = LocalConfiguration.current
+    LocalConfiguration.current
 
 
     Column(
@@ -259,7 +278,7 @@ fun ArchivoView(irAHome: () -> Unit, irAPantallaB: () -> Unit, volver: () -> Uni
 
 @Composable
 fun CamaraView(irAHome: () -> Unit, volver: () -> Unit) {
-    val configuration = LocalConfiguration.current
+    LocalConfiguration.current
 
 
 
@@ -285,7 +304,7 @@ fun CamaraView(irAHome: () -> Unit, volver: () -> Unit) {
 
 @Composable
 fun AccionesView(irAHome: () -> Unit, volver: () -> Unit) {
-    val configuration = LocalConfiguration.current
+    LocalConfiguration.current
 
 
     Column(
@@ -311,7 +330,7 @@ fun AccionesView(irAHome: () -> Unit, volver: () -> Unit) {
 
 @Composable
 fun UsuarioView(irAHome: () -> Unit, volver: () -> Unit) {
-    val configuration = LocalConfiguration.current
+    LocalConfiguration.current
 
 
     Column(
