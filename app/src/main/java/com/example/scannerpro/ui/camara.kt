@@ -1,3 +1,4 @@
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.ImageDecoder
 import android.net.Uri
@@ -11,8 +12,12 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -23,6 +28,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -35,12 +41,6 @@ import java.util.ArrayList
 import kotlin.math.abs
 import kotlin.math.sqrt
 
-// Data class para contener ambos resultados del procesamiento
-data class ProcessingResult(
-    val contourView: ImageBitmap,
-    val processedView: ImageBitmap // Renombrado para ser más genérico
-)
-
 // Enum para controlar qué método de pre-procesamiento se utiliza
 private enum class ProcessingMethod {
     STANDARD,
@@ -48,17 +48,17 @@ private enum class ProcessingMethod {
     MEDIAN_BLUR, // Para problemas de ruido
     MORPHOLOGICAL_CLOSE, // Para bordes rotos
     ADAPTIVE_THRESHOLD, // Para condiciones de iluminación muy variables
-    SPECULAR_REFLECTION, // Para reflejos de flash
-    ADAPTIVE_MORPH // Combinación final para fondos complejos
+    SPECULAR_REFLECTION // Para reflejos de flash
 }
 
 @Composable
-fun SimpleCannyDetectorScreen() {
+fun DocumentScannerScreen(
+    onDocumentScanned: (Bitmap) -> Unit,
+    onClose: () -> Unit
+) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-
-    // Estados de la UI
-    var processingResult by remember { mutableStateOf<ProcessingResult?>(null) }
+    var finalImagePreview by remember { mutableStateOf<ImageBitmap?>(null) }
     var validationLog by remember { mutableStateOf("Selecciona una imagen para iniciar el proceso.") }
     var isLoading by remember { mutableStateOf(false) }
 
@@ -75,11 +75,21 @@ fun SimpleCannyDetectorScreen() {
                         android.provider.MediaStore.Images.Media.getBitmap(context.contentResolver, uri)
                     }
                     val mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true)
-                    val result = findBestSizeAndProcess(mutableBitmap) { logLine ->
+
+                    // La función ahora devuelve un Bitmap puro
+                    val resultBitmap = findBestSizeAndProcess(mutableBitmap) { logLine ->
                         launch(Dispatchers.Main) { validationLog = logLine }
                     }
+
+                    // CORRECCIÓN: Mover el callback y la actualización de la UI al hilo principal
                     launch(Dispatchers.Main) {
-                        processingResult = result
+                        // MODIFICACIÓN: Se comenta la siguiente línea para que la imagen procesada
+                        // permanezca en pantalla para revisión del usuario, según lo solicitado.
+                        // El callback onDocumentScanned ya no se invoca automáticamente.
+                        // onDocumentScanned(resultBitmap)
+
+                        // Mostramos una vista previa en la UI actual
+                        finalImagePreview = resultBitmap.asImageBitmap()
                         isLoading = false
                     }
                 }
@@ -92,51 +102,45 @@ fun SimpleCannyDetectorScreen() {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Top
     ) {
-        Button(onClick = {
-            processingResult = null
-            validationLog = "Selecciona una imagen..."
-            photoPickerLauncher.launch(
-                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-            )
-        }) {
-            Text("Cargar y Procesar Automáticamente")
+        // --- BARRA SUPERIOR PERSONALIZADA ---
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            IconButton(onClick = onClose) {
+                Icon(Icons.Default.Close, contentDescription = "Cerrar")
+            }
+            Text("Escanear Documento", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.width(48.dp)) // Espacio para centrar el título
         }
 
         Spacer(Modifier.height(16.dp))
 
-        if (isLoading) {
-            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+        Button(onClick = {
+            finalImagePreview = null
+            validationLog = "Selecciona una imagen..."
+            photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+        }) {
+            Text("Cargar y Procesar Imagen")
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        Box(
+            modifier = Modifier.weight(1f).fillMaxWidth().border(1.dp, Color.Gray),
+            contentAlignment = Alignment.Center
+        ) {
+            if (isLoading) {
                 CircularProgressIndicator()
-            }
-        } else if (processingResult != null) {
-            // Fila para mostrar ambas imágenes
-            Row(
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Contorno Detectado", fontSize = 14.sp)
-                    Spacer(Modifier.height(4.dp))
-                    Image(
-                        bitmap = processingResult!!.contourView,
-                        contentDescription = "Contorno en Verde",
-                        modifier = Modifier.fillMaxSize().border(1.dp, Color.Gray),
-                        contentScale = ContentScale.Fit
-                    )
-                }
-                Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Vista de Procesamiento", fontSize = 14.sp)
-                    Spacer(Modifier.height(4.dp))
-                    Image(
-                        bitmap = processingResult!!.processedView,
-                        contentDescription = "Vista de Procesamiento",
-                        modifier = Modifier.fillMaxSize().border(1.dp, Color.Gray),
-                        contentScale = ContentScale.Fit
-                    )
-                }
-            }
-        } else {
-            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+            } else if (finalImagePreview != null) {
+                Image(
+                    bitmap = finalImagePreview!!,
+                    contentDescription = "Vista Previa del Contorno Detectado",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Fit
+                )
+            } else {
                 Text("Esperando imagen...", textAlign = TextAlign.Center)
             }
         }
@@ -152,61 +156,65 @@ fun SimpleCannyDetectorScreen() {
     }
 }
 
-private fun findBestSizeAndProcess(sourceBitmap: Bitmap, logUpdater: (String) -> Unit): ProcessingResult {
+// Data class para el resultado de la detección inicial
+private data class InitialDetection(
+    val bestContour: MatOfPoint?,
+    val bestWidth: Double,
+    val finalMethod: ProcessingMethod
+)
+
+private fun findBestSizeAndProcess(sourceBitmap: Bitmap, logUpdater: (String) -> Unit): Bitmap {
+    val initialDetection = findBestContour(sourceBitmap, logUpdater)
+    return drawFinalContour(sourceBitmap, initialDetection)
+}
+
+
+private fun findBestContour(sourceBitmap: Bitmap, logUpdater: (String) -> Unit): InitialDetection {
     val sizesToTest = listOf(240.0, 320.0, 480.0, 640.0, 800.0, 960.0, 1080.0, 1200.0)
     var bestWidth = 0.0
     var maxQuads = -1
     val logBuilder = StringBuilder()
     var finalMethod = ProcessingMethod.STANDARD
+    var bestContour: MatOfPoint? = null
 
-    // Pipeline de Fases
     val phases = listOf(
-        ProcessingMethod.STANDARD,
-        ProcessingMethod.CLAHE,
-        ProcessingMethod.MEDIAN_BLUR,
-        ProcessingMethod.MORPHOLOGICAL_CLOSE,
-        ProcessingMethod.ADAPTIVE_THRESHOLD,
-        ProcessingMethod.SPECULAR_REFLECTION,
-        ProcessingMethod.ADAPTIVE_MORPH
+        ProcessingMethod.STANDARD, ProcessingMethod.CLAHE, ProcessingMethod.MEDIAN_BLUR,
+        ProcessingMethod.MORPHOLOGICAL_CLOSE, ProcessingMethod.ADAPTIVE_THRESHOLD,
+        ProcessingMethod.SPECULAR_REFLECTION
     )
 
     for ((index, method) in phases.withIndex()) {
-        if (maxQuads > 0) break // Si ya encontramos algo, no seguimos
-
+        if (maxQuads > 0) break
         logBuilder.append("\n--- Iniciando Fase ${index + 1}: ${method.name} ---\n")
         logUpdater(logBuilder.toString())
         finalMethod = method
-        maxQuads = -1 // Resetear para la nueva búsqueda
-
+        maxQuads = -1
         sizesToTest.forEach { width ->
-            val quadCount = countQuadsAtWidth(sourceBitmap, width, method)
-            val logLine = "-> Prueba ${method.name} a ${width.toInt()}px: $quadCount cuadriláteros.\n"
+            val (quads, contours) = countQuadsAtWidth(sourceBitmap, width, method)
+            val logLine = "-> Prueba ${method.name} a ${width.toInt()}px: $quads cuadriláteros.\n"
             logBuilder.append(logLine)
             logUpdater(logBuilder.toString())
-            if (quadCount >= maxQuads) {
-                maxQuads = quadCount
+            if (quads >= maxQuads) {
+                maxQuads = quads
                 bestWidth = width
+                bestContour = contours.maxByOrNull { Imgproc.contourArea(it) }
             }
         }
     }
 
-
     if (bestWidth == 0.0 || maxQuads <= 0) {
-        logBuilder.append("\nNo se encontraron cuadriláteros. Usando tamaño por defecto (640px).")
-        bestWidth = 640.0
+        logBuilder.append("\nNo se encontraron cuadriláteros.")
+        bestContour = null
     } else {
-        logBuilder.append("\nMétodo exitoso: $finalMethod. Mejor tamaño: ${bestWidth.toInt()}px. Generando vistas...")
+        logBuilder.append("\nMétodo exitoso: $finalMethod. Mejor tamaño: ${bestWidth.toInt()}px.")
     }
 
     logUpdater(logBuilder.toString())
 
-    val contourView = detectAndDrawOnHighRes(sourceBitmap, bestWidth, finalMethod)
-    val processedView = generateHighResProcessedView(sourceBitmap, finalMethod)
-
-    return ProcessingResult(contourView, processedView)
+    return InitialDetection(bestContour, bestWidth, finalMethod)
 }
 
-private fun countQuadsAtWidth(sourceBitmap: Bitmap, testWidth: Double, method: ProcessingMethod): Int {
+private fun countQuadsAtWidth(sourceBitmap: Bitmap, testWidth: Double, method: ProcessingMethod): Pair<Int, List<MatOfPoint>> {
     val originalMat = Mat()
     Utils.bitmapToMat(sourceBitmap, originalMat)
     val processedMat = Mat()
@@ -216,7 +224,6 @@ private fun countQuadsAtWidth(sourceBitmap: Bitmap, testWidth: Double, method: P
 
     val edges = Mat()
 
-    // Aplicar el pre-procesamiento adecuado según el método
     when (method) {
         ProcessingMethod.STANDARD -> Imgproc.GaussianBlur(processedMat, processedMat, Size(5.0, 5.0), 0.0)
         ProcessingMethod.CLAHE -> {
@@ -231,17 +238,10 @@ private fun countQuadsAtWidth(sourceBitmap: Bitmap, testWidth: Double, method: P
             clahe.apply(processedMat, processedMat)
             Imgproc.bilateralFilter(processedMat.clone(), processedMat, 9, 75.0, 75.0)
         }
-        ProcessingMethod.ADAPTIVE_MORPH -> Imgproc.GaussianBlur(processedMat, processedMat, Size(7.0, 7.0), 0.0)
     }
 
-    if (method == ProcessingMethod.ADAPTIVE_THRESHOLD || method == ProcessingMethod.ADAPTIVE_MORPH) {
+    if (method == ProcessingMethod.ADAPTIVE_THRESHOLD) {
         Imgproc.adaptiveThreshold(processedMat, edges, 255.0, Imgproc.ADAPTIVE_THRESH_GAUSSIAN_C, Imgproc.THRESH_BINARY_INV, 15, 4.0)
-        if (method == ProcessingMethod.ADAPTIVE_MORPH) {
-            val openKernel = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(3.0, 3.0))
-            val closeKernel = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(7.0, 7.0))
-            Imgproc.morphologyEx(edges, edges, Imgproc.MORPH_OPEN, openKernel)
-            Imgproc.morphologyEx(edges, edges, Imgproc.MORPH_CLOSE, closeKernel)
-        }
     } else {
         Imgproc.Canny(processedMat, edges, 50.0, 150.0)
     }
@@ -254,200 +254,67 @@ private fun countQuadsAtWidth(sourceBitmap: Bitmap, testWidth: Double, method: P
     val contours = ArrayList<MatOfPoint>()
     Imgproc.findContours(edges, contours, Mat(), Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE)
 
-    var quadrilateralCount = 0
-    val minArea = testWidth * testWidth * 0.02
-
-    for (contour in contours) {
-        if (Imgproc.contourArea(contour) < minArea) continue
-        val contour2f = MatOfPoint2f(*contour.toArray())
+    val goodQuads = contours.filter {
+        if (Imgproc.contourArea(it) < testWidth * testWidth * 0.02) return@filter false
+        val contour2f = MatOfPoint2f(*it.toArray())
         val approxCurve = MatOfPoint2f()
         Imgproc.approxPolyDP(contour2f, approxCurve, 0.02 * Imgproc.arcLength(contour2f, true), true)
-
-        if (approxCurve.total() == 4L && isGoodQuadrilateral(approxCurve)) {
-            quadrilateralCount++
-        }
+        approxCurve.total() == 4L && isGoodQuadrilateral(approxCurve)
     }
-    return quadrilateralCount
+
+    return Pair(goodQuads.size, goodQuads)
 }
 
-private fun detectAndDrawOnHighRes(sourceBitmap: Bitmap, optimalWidth: Double, method: ProcessingMethod): ImageBitmap {
-    val processingMat = Mat()
-    val scaleRatio = sourceBitmap.width / optimalWidth
-    val newSize = Size(optimalWidth, sourceBitmap.height / scaleRatio)
-
-    val originalMatForProcessing = Mat()
-    Utils.bitmapToMat(sourceBitmap, originalMatForProcessing)
-    Imgproc.resize(originalMatForProcessing, processingMat, newSize)
-    Imgproc.cvtColor(processingMat, processingMat, Imgproc.COLOR_RGBA2GRAY)
-
-    val edges = Mat()
-
-    when (method) {
-        ProcessingMethod.STANDARD -> Imgproc.GaussianBlur(processingMat, processingMat, Size(5.0, 5.0), 0.0)
-        ProcessingMethod.CLAHE -> {
-            val clahe = Imgproc.createCLAHE(2.0, Size(8.0, 8.0))
-            clahe.apply(processingMat, processingMat)
-            Imgproc.GaussianBlur(processingMat, processingMat, Size(5.0, 5.0), 0.0)
-        }
-        ProcessingMethod.MEDIAN_BLUR -> Imgproc.medianBlur(processingMat, processingMat, 5)
-        ProcessingMethod.MORPHOLOGICAL_CLOSE, ProcessingMethod.ADAPTIVE_THRESHOLD -> Imgproc.GaussianBlur(processingMat, processingMat, Size(5.0, 5.0), 0.0)
-        ProcessingMethod.SPECULAR_REFLECTION -> {
-            val clahe = Imgproc.createCLAHE(3.0, Size(8.0, 8.0))
-            clahe.apply(processingMat, processingMat)
-            Imgproc.bilateralFilter(processingMat.clone(), processingMat, 9, 75.0, 75.0)
-        }
-        ProcessingMethod.ADAPTIVE_MORPH -> Imgproc.GaussianBlur(processingMat, processingMat, Size(7.0, 7.0), 0.0)
-    }
-
-    if (method == ProcessingMethod.ADAPTIVE_THRESHOLD || method == ProcessingMethod.ADAPTIVE_MORPH) {
-        Imgproc.adaptiveThreshold(processingMat, edges, 255.0, Imgproc.ADAPTIVE_THRESH_GAUSSIAN_C, Imgproc.THRESH_BINARY_INV, 15, 4.0)
-        if (method == ProcessingMethod.ADAPTIVE_MORPH) {
-            val openKernel = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(3.0, 3.0))
-            val closeKernel = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(7.0, 7.0))
-            Imgproc.morphologyEx(edges, edges, Imgproc.MORPH_OPEN, openKernel)
-            Imgproc.morphologyEx(edges, edges, Imgproc.MORPH_CLOSE, closeKernel)
-        }
-    } else {
-        Imgproc.Canny(processingMat, edges, 50.0, 150.0)
-    }
-
-    if (method == ProcessingMethod.MORPHOLOGICAL_CLOSE) {
-        val kernel = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(5.0, 5.0))
-        Imgproc.morphologyEx(edges, edges, Imgproc.MORPH_CLOSE, kernel)
-    }
-
-    val contours = ArrayList<MatOfPoint>()
-    Imgproc.findContours(edges, contours, Mat(), Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE)
-
-    val lowResQuads = mutableListOf<MatOfPoint>()
-    val minArea = optimalWidth * optimalWidth * 0.02
-
-    for (contour in contours) {
-        if (Imgproc.contourArea(contour) < minArea) continue
-        val contour2f = MatOfPoint2f(*contour.toArray())
-        val approxCurve = MatOfPoint2f()
-        Imgproc.approxPolyDP(contour2f, approxCurve, 0.02 * Imgproc.arcLength(contour2f, true), true)
-
-        if (approxCurve.total() == 4L && isGoodQuadrilateral(approxCurve)) {
-            lowResQuads.add(MatOfPoint(*approxCurve.toArray()))
-        }
-    }
-
+private fun drawFinalContour(sourceBitmap: Bitmap, detection: InitialDetection): Bitmap {
     val highResMat = Mat()
     Utils.bitmapToMat(sourceBitmap, highResMat)
 
-    val highResQuads = mutableListOf<MatOfPoint>()
-    for (quad in lowResQuads) {
-        Core.multiply(quad, Scalar(scaleRatio, scaleRatio), quad)
-        highResQuads.add(quad)
-    }
-
-    if (highResQuads.isNotEmpty()) {
+    if (detection.bestContour != null) {
+        val scaleRatio = sourceBitmap.width / detection.bestWidth
+        val highResQuads = mutableListOf<MatOfPoint>()
+        val scaledContour = MatOfPoint()
+        Core.multiply(detection.bestContour, Scalar(scaleRatio, scaleRatio), scaledContour)
+        highResQuads.add(scaledContour)
         Imgproc.drawContours(highResMat, highResQuads, -1, Scalar(0.0, 255.0, 0.0, 255.0), 5)
     }
 
-    val resultBitmap = Bitmap.createBitmap(highResMat.cols(), highResMat.rows(), Bitmap.Config.ARGB_8888)
-    Utils.matToBitmap(highResMat, resultBitmap)
-    return resultBitmap.asImageBitmap()
+    return highResMat.toBitmap()
 }
 
-private fun generateHighResProcessedView(sourceBitmap: Bitmap, method: ProcessingMethod): ImageBitmap {
-    val highResMat = Mat()
-    Utils.bitmapToMat(sourceBitmap, highResMat)
-
-    val grayMat = Mat()
-    Imgproc.cvtColor(highResMat, grayMat, Imgproc.COLOR_RGBA2GRAY)
-
-    val edges = Mat()
-
-    when (method) {
-        ProcessingMethod.STANDARD -> Imgproc.GaussianBlur(grayMat, grayMat, Size(5.0, 5.0), 0.0)
-        ProcessingMethod.CLAHE -> {
-            val clahe = Imgproc.createCLAHE(2.0, Size(8.0, 8.0))
-            clahe.apply(grayMat, grayMat)
-            Imgproc.GaussianBlur(grayMat, grayMat, Size(5.0, 5.0), 0.0)
-        }
-        ProcessingMethod.MEDIAN_BLUR -> Imgproc.medianBlur(grayMat, grayMat, 5)
-        ProcessingMethod.MORPHOLOGICAL_CLOSE, ProcessingMethod.ADAPTIVE_THRESHOLD -> Imgproc.GaussianBlur(grayMat, grayMat, Size(5.0, 5.0), 0.0)
-        ProcessingMethod.SPECULAR_REFLECTION -> {
-            val clahe = Imgproc.createCLAHE(3.0, Size(8.0, 8.0))
-            clahe.apply(grayMat, grayMat)
-            Imgproc.bilateralFilter(grayMat.clone(), grayMat, 9, 75.0, 75.0)
-        }
-        ProcessingMethod.ADAPTIVE_MORPH -> Imgproc.GaussianBlur(grayMat, grayMat, Size(7.0, 7.0), 0.0)
-    }
-
-    if (method == ProcessingMethod.ADAPTIVE_THRESHOLD || method == ProcessingMethod.ADAPTIVE_MORPH) {
-        Imgproc.adaptiveThreshold(grayMat, edges, 255.0, Imgproc.ADAPTIVE_THRESH_GAUSSIAN_C, Imgproc.THRESH_BINARY_INV, 15, 4.0)
-        if (method == ProcessingMethod.ADAPTIVE_MORPH) {
-            val openKernel = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(3.0, 3.0))
-            val closeKernel = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(7.0, 7.0))
-            Imgproc.morphologyEx(edges, edges, Imgproc.MORPH_OPEN, openKernel)
-            Imgproc.morphologyEx(edges, edges, Imgproc.MORPH_CLOSE, closeKernel)
-        }
-    } else {
-        Imgproc.Canny(grayMat, edges, 50.0, 150.0)
-    }
-
-    if (method == ProcessingMethod.MORPHOLOGICAL_CLOSE) {
-        val kernel = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(5.0, 5.0))
-        Imgproc.morphologyEx(edges, edges, Imgproc.MORPH_CLOSE, kernel)
-    }
-
-    if (method != ProcessingMethod.ADAPTIVE_THRESHOLD) {
-        val kernel = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(3.0, 3.0))
-        Imgproc.dilate(edges, edges, kernel)
-    }
-
-    val matResultadoRGBA = Mat()
-    Imgproc.cvtColor(edges, matResultadoRGBA, Imgproc.COLOR_GRAY2RGBA)
-
-    val resultBitmap = Bitmap.createBitmap(matResultadoRGBA.cols(), matResultadoRGBA.rows(), Bitmap.Config.ARGB_8888)
-    Utils.matToBitmap(matResultadoRGBA, resultBitmap)
-
-    return resultBitmap.asImageBitmap()
-}
-
-/**
- * Valida si un contorno de 4 puntos es un "buen" cuadrilátero.
- * Verifica que sea convexo y que sus ángulos sean aproximadamente de 90 grados.
- */
 private fun isGoodQuadrilateral(contour: MatOfPoint2f): Boolean {
     val points = contour.toArray()
     if (points.size != 4) return false
 
-    // 1. Verificar convexidad
     val matOfPoint = MatOfPoint(*points)
     if (!Imgproc.isContourConvex(matOfPoint)) {
         return false
     }
 
-    // 2. Verificar que los ángulos sean cercanos a 90 grados
-    // Se calcula el coseno de cada ángulo. Para 90 grados, el coseno es 0.
-    // Se permite una tolerancia (ej. 0.3, que corresponde a ángulos entre 72 y 108 grados)
+    val rect = Imgproc.boundingRect(matOfPoint)
+    val aspectRatio = rect.width.toDouble() / rect.height.toDouble()
+    val validRatioRange = 0.5..2.0
+    if (aspectRatio !in validRatioRange && (1/aspectRatio) !in validRatioRange) {
+        return false
+    }
+
     val maxCosine = 0.3
     for (i in 2..4) {
-        val pt1 = points[i % 4]
-        val pt2 = points[i - 2]
-        val pt0 = points[i - 1]
-
-        val dx1 = pt1.x - pt0.x
-        val dy1 = pt1.y - pt0.y
-        val dx2 = pt2.x - pt0.x
-        val dy2 = pt2.y - pt0.y
-
+        val pt1 = points[i % 4]; val pt2 = points[i - 2]; val pt0 = points[i - 1]
+        val dx1 = pt1.x - pt0.x; val dy1 = pt1.y - pt0.y
+        val dx2 = pt2.x - pt0.x; val dy2 = pt2.y - pt0.y
         val dotProduct = dx1 * dx2 + dy1 * dy2
         val magnitude1 = sqrt(dx1 * dx1 + dy1 * dy1)
         val magnitude2 = sqrt(dx2 * dx2 + dy2 * dy2)
-
-        if (magnitude1 == 0.0 || magnitude2 == 0.0) return false // Evitar división por cero
-
+        if (magnitude1 == 0.0 || magnitude2 == 0.0) return false
         val cosine = abs(dotProduct / (magnitude1 * magnitude2))
-
-        if (cosine > maxCosine) {
-            return false
-        }
+        if (cosine > maxCosine) return false
     }
     return true
 }
 
+// Extension function to convert Mat to Bitmap easily
+private fun Mat.toBitmap(): Bitmap {
+    val bmp = Bitmap.createBitmap(this.cols(), this.rows(), Bitmap.Config.ARGB_8888)
+    Utils.matToBitmap(this, bmp)
+    return bmp
+}

@@ -2,12 +2,7 @@
 
 package com.example.scannerpro
 
-//import DocumentScanner
-//import DocumentScannerComponent
-//import DocumentScannerScreen
-import SimpleCannyDetectorScreen
-//import SimpleCannyDetectorScreen
-import android.graphics.pdf.content.PdfPageGotoLinkContent
+import DocumentScannerScreen
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -18,19 +13,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Face
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.AlertDialogDefaults.containerColor
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -50,16 +39,11 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-//import com.example.scannerpro.ui.DetailScreen
-//import com.example.scannerpro.ui.HomeView
-//import com.example.scannerpro.ui.ListScreen
-//import com.example.scannerpro.ui.Testvista
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.currentBackStackEntryAsState
-
 import com.example.scannerpro.ui.HomeScreen
 import org.opencv.android.OpenCVLoader
-
+//Rutas
 sealed class Screen(val route: String) {
     object Home : Screen("home")
     object Camara : Screen("camara")
@@ -67,42 +51,26 @@ sealed class Screen(val route: String) {
     object Usuario : Screen("usuario")
     object Acciones : Screen("herramientas")
 }
-
-
-//data class BottomNavItem(val screen: Screen, val label: String, val icon: Int)
-
-// Data class que guarda un id de drawable
 data class BottomNavItem(@DrawableRes val iconRes: Int, val screen: Screen, val label: String)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // --- 1. INICIAR OPENCV ---
-        // Debes cargar la biblioteca nativa antes de usar cualquier función.
-        if (OpenCVLoader.initDebug()) {
+        if (OpenCVLoader.initLocal()) {
             Log.d("OpenCV", "OpenCV se ha cargado exitosamente.")
         } else {
             Log.e("OpenCV", "¡Error al cargar OpenCV!")
-            // En una app real, deberías manejar este error
-        }
 
+        }
         enableEdgeToEdge()
         setContent {
             // Entrada de aplicacion
-           // AppEntry()
-            SimpleCannyDetectorScreen()
+            AppEntry()
+
         }
     }
 }
-//NavHost(navController, startDestination = "home") {
-//
-//        composable("home") {
-//            HomeView(
-//                onNavigateToList = { navController.navigate("list") },
-//                onNavigateToDetail = { navController.navigate("detail/0") },
-//                onNavigateTest = { navController.navigate("test") }
-//            )
-//        }
 
 @Composable
 fun AppEntry() {
@@ -120,11 +88,9 @@ fun AppEntry() {
         "Imagen_duplicada_02.jpg"
     )
     val navBackStackEntry by navController.currentBackStackEntryAsState()
-    val currentRoute = navBackStackEntry?.destination?.route
+    val rutaAcual = navBackStackEntry?.destination?.route
     Scaffold(bottomBar = {
-
-
-        if (currentRoute != Screen.Camara.route ) {
+        if (rutaAcual != Screen.Camara.route) {
             BottomBar(navController = navController)
         }
     }) { inner ->
@@ -141,46 +107,44 @@ fun AppEntry() {
                 ArchivoView(
                     irAHome = { navController.navigate(Screen.Archivos.route) },
                     irAPantallaB = { navController.navigate(Screen.Archivos.route) },
-                    volver = { navController.popBackStack() }
-                )
+                    volver = { navController.popBackStack() })
             }
             composable(Screen.Camara.route) {
 //                // Ejemplo de cómo lo llamarías
-//                SimpleCannyDetectorScreen(
-//                    onDocumentScanned = { bitmapResult ->
-//                        // Aquí recibes el bitmap final.
-//                        // Puedes navejar hacia atrás y pasar este bitmap a la pantalla anterior,
-//                        // guardarlo en un ViewModel, o subirlo a un servidor.
-//                        Log.d("MainActivity", "Bitmap recibido! Tamaño: ${bitmapResult.width}x${bitmapResult.height}")
-//
-//                        // Opcional: Pasar el bitmap de vuelta usando argumentos de navegación si es necesario
-//                        // navController.previousBackStackEntry?.savedStateHandle?.set("scannedBitmap", bitmapResult)
-//
-//                        // Lógica para volver a la pantalla anterior
-//                        navController.popBackStack()
-//}, onClose = {
-//        // Simplemente volvemos a la pantalla anterior
-//        navController.popBackStack()
-//    }
-//)
-////                CamaraView(
-////                    irAHome = { navController.navigate(Screen.Camara.route) },
-////                    volver = { navController.popBackStack() }
-////                )
-          }
+                DocumentScannerScreen(onDocumentScanned = { bitmapResult ->
+                    // Aquí recibes el bitmap final.
+                    // Puedes navejar hacia atrás y pasar este bitmap a la pantalla anterior,
+                    // guardarlo en un ViewModel, o subirlo a un servidor.
+                    Log.d(
+                        "MainActivity",
+                        "Bitmap recibido! Tamaño: ${bitmapResult.width}x${bitmapResult.height}"
+                    )
+
+                    // Opcional: Pasar el bitmap de vuelta usando argumentos de navegación si es necesario
+                    // navController.previousBackStackEntry?.savedStateHandle?.set("scannedBitmap", bitmapResult)
+
+                    // Lógica para volver a la pantalla anterior
+                    navController.popBackStack()
+                }, onClose = {
+                    // Simplemente volvemos a la pantalla anterior
+                    navController.popBackStack()
+                })
+//                CamaraView(
+//                    irAHome = { navController.navigate(Screen.Camara.route) },
+//                    volver = { navController.popBackStack() }
+//                )
+            }
 
             composable(Screen.Acciones.route) {
                 AccionesView(
                     irAHome = { navController.navigate(Screen.Acciones.route) },
-                    volver = { navController.popBackStack() }
-                )
+                    volver = { navController.popBackStack() })
             }
 
             composable(Screen.Usuario.route) {
                 UsuarioView(
                     irAHome = { navController.navigate(Screen.Usuario.route) },
-                    volver = { navController.popBackStack() }
-                )
+                    volver = { navController.popBackStack() })
             }
 
         }
@@ -225,17 +189,14 @@ fun BottomBar(navController: androidx.navigation.NavHostController) {
                         launchSingleTop = true
                         restoreState = true
                     }
-                },
-                icon = {
+                }, icon = {
                     Box(
                         modifier = Modifier
                             .size(36.dp) // tamaño del círculo
                             .background(
                                 color = if (selected) Color(0xFF4CAF50) // verde solo cuando está seleccionado
-                                else Color.Transparent,
-                                shape = CircleShape
-                            ),
-                        contentAlignment = Alignment.Center
+                                else Color.Transparent, shape = CircleShape
+                            ), contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             painter = painterResource(id = item.iconRes),
@@ -245,9 +206,7 @@ fun BottomBar(navController: androidx.navigation.NavHostController) {
                             else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                         )
                     }
-                },
-                label = { Text(item.label) }
-            )
+                }, label = { Text(item.label) })
         }
     }
 }
@@ -268,9 +227,11 @@ fun ArchivoView(irAHome: () -> Unit, irAPantallaB: () -> Unit, volver: () -> Uni
         Spacer(modifier = Modifier.height(16.dp))
 
         Spacer(modifier = Modifier.height(8.dp))
-        Button(onClick = volver, modifier = Modifier
-            .fillMaxWidth(0.7f)
-            .height(50.dp)) {
+        Button(
+            onClick = volver, modifier = Modifier
+                .fillMaxWidth(0.7f)
+                .height(50.dp)
+        ) {
             Text("Volver")
         }
     }
@@ -293,9 +254,11 @@ fun CamaraView(irAHome: () -> Unit, volver: () -> Unit) {
         Spacer(modifier = Modifier.height(16.dp))
 
         Spacer(modifier = Modifier.height(8.dp))
-        Button(onClick = volver, modifier = Modifier
-            .fillMaxWidth(0.7f)
-            .height(50.dp)) {
+        Button(
+            onClick = volver, modifier = Modifier
+                .fillMaxWidth(0.7f)
+                .height(50.dp)
+        ) {
             Text("Volver")
         }
     }
@@ -318,9 +281,11 @@ fun AccionesView(irAHome: () -> Unit, volver: () -> Unit) {
         Spacer(modifier = Modifier.height(16.dp))
 
         Spacer(modifier = Modifier.height(8.dp))
-        Button(onClick = volver, modifier = Modifier
-            .fillMaxWidth(0.7f)
-            .height(50.dp)) {
+        Button(
+            onClick = volver, modifier = Modifier
+                .fillMaxWidth(0.7f)
+                .height(50.dp)
+        ) {
             Text("Volver")
         }
     }
@@ -344,9 +309,11 @@ fun UsuarioView(irAHome: () -> Unit, volver: () -> Unit) {
         Spacer(modifier = Modifier.height(16.dp))
 
         Spacer(modifier = Modifier.height(8.dp))
-        Button(onClick = volver, modifier = Modifier
-            .fillMaxWidth(0.7f)
-            .height(50.dp)) {
+        Button(
+            onClick = volver, modifier = Modifier
+                .fillMaxWidth(0.7f)
+                .height(50.dp)
+        ) {
             Text("Volver")
         }
     }
