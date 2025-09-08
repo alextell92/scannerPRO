@@ -112,28 +112,34 @@ fun AppEntry() {
                     volver = { navController.popBackStack() })
             }
             composable(Screen.Camara.route) {
-//                // Ejemplo de cómo lo llamarías
                 DocumentScannerScreen(
                     onProcessingComplete = { bitmapResult ->
-                        // Aquí recibes el bitmap final con el contorno dibujado.
-                        // Puedes navegas hacia atrás y pasar este bitmap a la pantalla anterior,
-                        // guardarlo en un ViewModel, o subirlo a un servidor.
+                        // Esta lambda se llamará para cada página que el usuario
+                        // confirme con el botón "Agregar" o finalice.
                         Log.d(
                             "MainActivity",
                             "Bitmap procesado recibido! Tamaño: ${bitmapResult.width}x${bitmapResult.height}"
                         )
 
-                        // Lógica para volver a la pantalla anterior
+                        // Si quieres que la app soporte múltiples escaneos,
+                        // aquí deberías guardar el 'bitmapResult' en una lista (por ejemplo, en un ViewModel)
+                        // en lugar de cerrar la pantalla.
+
+                        // Tu lógica actual para un solo escaneo (cerrar la pantalla) sigue funcionando.
                         navController.popBackStack()
                     },
-                 onClose = {
-                    // Simplemente volvemos a la pantalla anterior
-                    navController.popBackStack()
-                })
-//                CamaraView(
-//                    irAHome = { navController.navigate(Screen.Camara.route) },
-//                    volver = { navController.popBackStack() }
-//                )
+                    onClose = {
+                        // El usuario cierra la pantalla de escaneo.
+                        navController.popBackStack()
+                    },
+                    onAddAnotherScan = {
+                        // Esta lambda se llama justo antes de que la cámara se reactive
+                        // para escanear la siguiente página.
+                        // Puedes usarla para actualizar la UI, como un contador de páginas.
+                        // Por ahora, puede quedar vacía.
+                        Log.d("MainActivity", "Preparando para escanear otra página...")
+                    }
+                )
             }
 
             composable(Screen.Acciones.route) {

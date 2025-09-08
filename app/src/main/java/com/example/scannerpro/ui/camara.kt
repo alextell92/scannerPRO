@@ -1,4 +1,5 @@
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
@@ -17,7 +18,14 @@ import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -33,7 +41,6 @@ import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.RotateLeft
-import androidx.compose.material.icons.filled.RotateRight
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -44,6 +51,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -60,6 +68,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -72,13 +81,15 @@ import org.opencv.core.Point
 import org.opencv.core.Scalar
 import org.opencv.core.Size
 import org.opencv.imgproc.Imgproc
+import java.io.File
+import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.util.ArrayList
 import kotlin.math.abs
 import kotlin.math.pow
 import kotlin.math.sqrt
 
-// AÑADIDO: Data class para el resultado de la detección. Separa la imagen de los puntos.
+// Data class para el resultado de la detección. Separa la imagen de los puntos.
 data class DetectionResult(
     val originalBitmap: Bitmap,
     val cornerPoints: List<Point>
@@ -95,38 +106,56 @@ private enum class ProcessingMethod {
     ADAPTIVE_MORPH
 }
 
-// AÑADIDO: Enum para controlar el estado de la pantalla de recorte
+// Enum para controlar el estado de la pantalla de recorte
 private enum class CropScreenState {
     CROP_PREVIEW,
     MANUAL_ADJUST
 }
 
-// AÑADIDO: Enum para los tipos de filtro de imagen
+// Enum para los tipos de filtro de imagen
 private enum class FilterType {
     NONE,
     SCANNER_LIGHT,
 }
 
+// Enum para el flujo general de la pantalla
+private enum class ScannerFlowState {
+    CAMERA,
+    EDITING,
+    FINAL_REVIEW
+}
+
 @Composable
 fun DocumentScannerScreen(
     onProcessingComplete: (Bitmap) -> Unit,
-    onClose: () -> Unit
+    onClose: () -> Unit,
+    onAddAnotherScan: () -> Unit
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val lifecycleOwner = LocalLifecycleOwner.current
 
+    // Estado para controlar el flujo general
+    var flowState by remember { mutableStateOf(ScannerFlowState.CAMERA) }
+
     var detectionResult by remember { mutableStateOf<DetectionResult?>(null) }
     var adjustedPoints by remember { mutableStateOf<List<Point>?>(null) }
     var croppedBitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var cropState by remember { mutableStateOf(CropScreenState.CROP_PREVIEW) }
+    var editState by remember { mutableStateOf(CropScreenState.CROP_PREVIEW) }
     // Estados para la gestión de filtros
     var selectedFilter by remember { mutableStateOf(FilterType.NONE) }
     var filteredBitmap by remember { mutableStateOf<Bitmap?>(null) }
-    // AÑADIDO: Estados para el modo de ajuste de intensidad
+    // Estados para el modo de ajuste de intensidad
     var isAdjustingFilterIntensity by remember { mutableStateOf(false) }
     var filterIntensity by remember { mutableStateOf(1.1f) } // Intensidad de contraste por defecto
+    // Estado para la animación de carga
+    var bitmapForProcessing by remember { mutableStateOf<Bitmap?>(null) }
 
+    // Estado para la pantalla de revisión final
+    //var finalBitmap by remember { mutableStateOf<Bitmap?>(null) }
+
+    var scannedBitmaps by remember { mutableStateOf<List<Bitmap>>(emptyList()) }
+    var editingBitmapIndex by remember { mutableStateOf<Int?>(null) } // Para saber qué imagen editar
 
     var isLoading by remember { mutableStateOf(false) }
 
@@ -139,6 +168,18 @@ fun DocumentScannerScreen(
 
     var isFlashOn by remember { mutableStateOf(false) }
     var camera by remember { mutableStateOf<Camera?>(null) }
+
+    fun resetToCameraState() {
+        detectionResult = null
+        adjustedPoints = null
+        croppedBitmap = null
+        filteredBitmap = null
+        editState = CropScreenState.CROP_PREVIEW
+        isAdjustingFilterIntensity = false
+        bitmapForProcessing = null
+        //finalBitmap = null
+        flowState = ScannerFlowState.CAMERA
+    }
 
     LaunchedEffect(key1 = true) {
         permissionLauncher.launch(android.Manifest.permission.CAMERA)
@@ -167,10 +208,9 @@ fun DocumentScannerScreen(
 
     fun runDetectionAndCrop(bitmapToProcess: Bitmap) {
         isLoading = true
+        bitmapForProcessing = bitmapToProcess
         coroutineScope.launch(Dispatchers.Default) {
-            val result = findBestSizeAndProcess(bitmapToProcess) { logLine ->
-                Log.d("ImageProcessing", logLine)
-            }
+            val result = findBestSizeAndProcess(bitmapToProcess)
             val newCroppedBitmap = result?.let { cropAndWarp(it.originalBitmap, it.cornerPoints) }
 
             launch(Dispatchers.Main) {
@@ -178,8 +218,10 @@ fun DocumentScannerScreen(
                 adjustedPoints = result?.cornerPoints
                 croppedBitmap = newCroppedBitmap
                 isLoading = false
-                cropState = CropScreenState.CROP_PREVIEW
+                bitmapForProcessing = null // Limpia el bitmap cuando termina
+                editState = CropScreenState.CROP_PREVIEW
                 selectedFilter = FilterType.SCANNER_LIGHT
+                flowState = ScannerFlowState.EDITING // Cambia al estado de edición
             }
         }
     }
@@ -205,74 +247,94 @@ fun DocumentScannerScreen(
     )
 
     Box(modifier = Modifier.fillMaxSize()) {
-        if (detectionResult == null && hasCamPermission) {
-            CameraPreview(
-                modifier = Modifier.fillMaxSize(),
-                onUseCase = { previewUseCase ->
-                    val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
-                    cameraProviderFuture.addListener({
-                        val cameraProvider = cameraProviderFuture.get()
-                        val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
-                        cameraProvider.unbindAll()
-                        camera = cameraProvider.bindToLifecycle(
-                            lifecycleOwner,
-                            cameraSelector,
-                            previewUseCase,
-                            imageCapture
-                        )
-                    }, ContextCompat.getMainExecutor(context))
-                }
-            )
-        } else if (detectionResult != null) {
-            when(cropState) {
-                CropScreenState.CROP_PREVIEW -> {
-                    filteredBitmap?.let {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(Color(0xFF1C1C1E)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            androidx.compose.foundation.Image(
-                                bitmap = it.asImageBitmap(),
-                                contentDescription = "Documento recortado y filtrado",
-                                contentScale = ContentScale.Fit,
+        // MODIFICADO: El contenido de la pantalla depende del estado del flujo
+        when (flowState) {
+            ScannerFlowState.CAMERA -> {
+                CameraPreview(
+                    modifier = Modifier.fillMaxSize(),
+                    onUseCase = { previewUseCase ->
+                        val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
+                        cameraProviderFuture.addListener({
+                            val cameraProvider = cameraProviderFuture.get()
+                            val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+                            cameraProvider.unbindAll()
+                            camera = cameraProvider.bindToLifecycle(
+                                lifecycleOwner,
+                                cameraSelector,
+                                previewUseCase,
+                                imageCapture
+                            )
+                        }, ContextCompat.getMainExecutor(context))
+                    }
+                )
+            }
+            ScannerFlowState.EDITING -> {
+                // Contenido de la pantalla de edición (lo que ya teníamos)
+                when(editState) {
+                    CropScreenState.CROP_PREVIEW -> {
+                        filteredBitmap?.let {
+                            Box(
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .padding(horizontal = 56.dp, vertical = 130.dp)
-                            )
+                                    .background(Color(0xFF1C1C1E)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Image(
+                                    bitmap = it.asImageBitmap(),
+                                    contentDescription = "Documento recortado y filtrado",
+                                    contentScale = ContentScale.Fit,
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = 56.dp, vertical = 130.dp)
+                                )
+                            }
                         }
                     }
+                    CropScreenState.MANUAL_ADJUST -> {
+                        InteractiveDocumentView(
+                            bitmap = detectionResult!!.originalBitmap,
+                            initialPoints = adjustedPoints ?: detectionResult!!.cornerPoints,
+                            onPointsUpdated = { newPoints ->
+                                adjustedPoints = newPoints
+                            }
+                        )
+                    }
                 }
-                CropScreenState.MANUAL_ADJUST -> {
-                    InteractiveDocumentView(
-                        bitmap = detectionResult!!.originalBitmap,
-                        initialPoints = adjustedPoints ?: detectionResult!!.cornerPoints,
-                        onPointsUpdated = { newPoints ->
-                            adjustedPoints = newPoints
-                        }
-                    )
-                }
+            }
+            ScannerFlowState.FINAL_REVIEW -> {
+                FinalReviewScreen(
+                    initialBitmaps = scannedBitmaps,
+                    onAddAnotherScan = {
+                        // El usuario quiere escanear otra página,
+                        // simplemente reseteamos al estado de la cámara.
+                        resetToCameraState()
+                    },
+                    onEditRequest = { index ->
+                        // El usuario quiere editar una página específica.
+                        // Preparamos el estado de edición con esa página.
+                        val bitmapToEdit = scannedBitmaps[index]
+                        croppedBitmap = bitmapToEdit
+                        selectedFilter = FilterType.NONE // Resetea el filtro para la nueva edición
+                        editingBitmapIndex = index // Guardamos el índice para saber cuál reemplazar
+                        flowState = ScannerFlowState.EDITING // Volvemos a la pantalla de edición
+                    }
+                )
             }
         }
 
+
         val closeAction = {
-            if (detectionResult == null) {
+            if (flowState == ScannerFlowState.CAMERA) {
                 onClose()
             } else {
-                detectionResult = null
-                adjustedPoints = null
-                croppedBitmap = null
-                filteredBitmap = null
-                cropState = CropScreenState.CROP_PREVIEW
-                isAdjustingFilterIntensity = false
+                resetToCameraState()
             }
         }
         IconButton(onClick = closeAction, modifier = Modifier.align(Alignment.TopStart).padding(16.dp)) {
             Icon(Icons.Default.Close, contentDescription = "Cerrar / Reintentar", tint = Color.White, modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).padding(8.dp))
         }
 
-        if (detectionResult == null && hasCamPermission) {
+        if (flowState == ScannerFlowState.CAMERA && hasCamPermission) {
             IconButton(
                 onClick = { isFlashOn = !isFlashOn },
                 modifier = Modifier.align(Alignment.TopEnd).padding(16.dp)
@@ -291,127 +353,193 @@ fun DocumentScannerScreen(
         }
 
         // --- Lógica de Botones Inferiores ---
-        if (detectionResult == null) {
-            Row(
-                modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter).padding(32.dp),
-                horizontalArrangement = Arrangement.SpaceAround,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = { photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) {
-                    Icon(Icons.Default.PhotoLibrary, contentDescription = "Abrir Galería", tint = Color.White, modifier = Modifier.size(40.dp))
+        when (flowState) {
+            ScannerFlowState.CAMERA -> {
+                Row(
+                    modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter).padding(32.dp),
+                    horizontalArrangement = Arrangement.SpaceAround,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = { photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) {
+                        Icon(Icons.Default.PhotoLibrary, contentDescription = "Abrir Galería", tint = Color.White, modifier = Modifier.size(40.dp))
+                    }
+                    IconButton(onClick = { takePhoto(context, imageCapture, isFlashOn, processBitmap) }, modifier = Modifier.size(72.dp)) {
+                        Icon(Icons.Default.CameraAlt, contentDescription = "Tomar Foto", tint = Color.White, modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha=0.3f), CircleShape).padding(8.dp))
+                    }
+                    Spacer(modifier = Modifier.size(40.dp))
                 }
-                IconButton(onClick = { takePhoto(context, imageCapture, isFlashOn, processBitmap) }, modifier = Modifier.size(72.dp)) {
-                    Icon(Icons.Default.CameraAlt, contentDescription = "Tomar Foto", tint = Color.White, modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha=0.3f), CircleShape).padding(8.dp))
-                }
-                Spacer(modifier = Modifier.size(40.dp))
             }
-        } else {
-            Column(modifier = Modifier.align(Alignment.BottomCenter)) {
-                if (isAdjustingFilterIntensity) {
-                    // Muestra solo la barra de ajuste de intensidad
-                    BottomAppBar(
-                        containerColor = Color(0xFF1C1C1E).copy(alpha = 0.95f),
-                        contentColor = Color.White,
-                        contentPadding = PaddingValues(horizontal = 16.dp),
-                        modifier = Modifier.height(80.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Slider(
-                                value = filterIntensity,
-                                onValueChange = { filterIntensity = it },
-                                valueRange = 0.5f..2.0f,
-                                modifier = Modifier.weight(1f)
-                            )
-                            IconButton(onClick = { isAdjustingFilterIntensity = false }) {
-                                Icon(Icons.Default.Check, contentDescription = "Aceptar ajuste de filtro")
-                            }
-                        }
-                    }
-                } else {
-                    // Muestra las barras de filtros y acciones
-                    if (cropState == CropScreenState.CROP_PREVIEW) {
+            ScannerFlowState.EDITING -> {
+                Column(modifier = Modifier.align(Alignment.BottomCenter)) {
+                    if (isAdjustingFilterIntensity) {
                         BottomAppBar(
-                            containerColor = Color(0xFF1C1C1E).copy(alpha = 0.8f),
+                            containerColor = Color(0xFF1C1C1E).copy(alpha = 0.95f),
                             contentColor = Color.White,
-                            contentPadding = PaddingValues(horizontal = 8.dp),
-                            modifier = Modifier.height(60.dp)
+                            contentPadding = PaddingValues(horizontal = 16.dp),
+                            modifier = Modifier.height(80.dp)
                         ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceEvenly,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                FilterActionButton(text = "Original", isSelected = selectedFilter == FilterType.NONE, onClick = {
-                                    selectedFilter = FilterType.NONE
-                                })
-                                FilterActionButton(text = "Luz Escáner", isSelected = selectedFilter == FilterType.SCANNER_LIGHT, onClick = {
-                                    if (selectedFilter == FilterType.SCANNER_LIGHT) {
-                                        isAdjustingFilterIntensity = true
-                                    } else {
-                                        selectedFilter = FilterType.SCANNER_LIGHT
-                                        filterIntensity = 1.1f
-                                    }
-                                })
+                            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Slider(value = filterIntensity, onValueChange = { filterIntensity = it }, valueRange = 0.5f..2.0f, modifier = Modifier.weight(1f))
+                                IconButton(onClick = { isAdjustingFilterIntensity = false }) {
+                                    Icon(Icons.Default.Check, contentDescription = "Aceptar ajuste de filtro")
+                                }
                             }
                         }
-                    }
-
-                    BottomAppBar(
-                        containerColor = Color(0xFF2C2C2E),
-                        contentColor = Color.White,
-                        modifier = Modifier.height(80.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceEvenly,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            when (cropState) {
-                                CropScreenState.CROP_PREVIEW -> {
-                                    ActionButton(icon = Icons.Default.PhotoLibrary, text = "Importar", onClick = { photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) })
-                                    ActionButton(icon = Icons.Default.RotateLeft, text = "Girar", onClick = { croppedBitmap?.let { croppedBitmap = it.rotate(-90f) } })
-                                    ActionButton(icon = Icons.Default.Crop, text = "Recortar", onClick = { cropState = CropScreenState.MANUAL_ADJUST })
-                                    ActionButton(icon = Icons.Default.Check, text = "Ok", onClick = { filteredBitmap?.let { onProcessingComplete(it) } }, enabled = filteredBitmap != null && !isLoading)
+                    } else {
+                        if (editState == CropScreenState.CROP_PREVIEW) {
+                            BottomAppBar(containerColor = Color(0xFF1C1C1E).copy(alpha = 0.8f), contentColor = Color.White, contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.height(60.dp)) {
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+                                    FilterActionButton(text = "Original", isSelected = selectedFilter == FilterType.NONE, onClick = { selectedFilter = FilterType.NONE })
+                                    FilterActionButton(text = "Luz Escáner", isSelected = selectedFilter == FilterType.SCANNER_LIGHT, onClick = {
+                                        if (selectedFilter == FilterType.SCANNER_LIGHT) isAdjustingFilterIntensity = true else {
+                                            selectedFilter = FilterType.SCANNER_LIGHT
+                                            filterIntensity = 1.1f
+                                        }
+                                    })
                                 }
-                                CropScreenState.MANUAL_ADJUST -> {
-                                    ActionButton(icon = Icons.Default.AutoFixHigh, text = "Automático", onClick = { detectionResult?.originalBitmap?.let { runDetectionAndCrop(it) } })
-                                    ActionButton(
-                                        icon = Icons.Default.Check,
-                                        text = "Aplicar",
-                                        onClick = {
+                            }
+                        }
+                        BottomAppBar(containerColor = Color(0xFF2C2C2E), contentColor = Color.White, modifier = Modifier.height(80.dp)) {
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+                                when (editState) {
+                                    CropScreenState.CROP_PREVIEW -> {
+                                        ActionButton(icon = Icons.Default.PhotoLibrary, text = "Importar", onClick = { photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) })
+                                        ActionButton(icon = Icons.Default.RotateLeft, text = "Girar", onClick = { croppedBitmap?.let { croppedBitmap = it.rotate(-90f) } })
+                                        ActionButton(icon = Icons.Default.Crop, text = "Recortar", onClick = { editState = CropScreenState.MANUAL_ADJUST })
+                                        ActionButton(icon = Icons.Default.Check, text = "Ok", onClick = {
+                                            filteredBitmap?.let { editedBitmap ->
+                                                val newList = scannedBitmaps.toMutableList()
+                                                if (editingBitmapIndex != null) {
+                                                    // Si estamos editando, reemplazamos la imagen en la lista
+                                                    newList[editingBitmapIndex!!] = editedBitmap
+                                                } else {
+                                                    // Si es una nueva, la agregamos al final
+                                                    newList.add(editedBitmap)
+                                                }
+                                                scannedBitmaps = newList
+                                                editingBitmapIndex = null // Limpiamos el índice después de usarlo
+                                            }
+                                            flowState = ScannerFlowState.FINAL_REVIEW
+                                        }, enabled = filteredBitmap != null && !isLoading)
+                                    }
+                                    CropScreenState.MANUAL_ADJUST -> {
+                                        ActionButton(icon = Icons.Default.AutoFixHigh, text = "Automático", onClick = { detectionResult?.originalBitmap?.let { runDetectionAndCrop(it) } })
+                                        ActionButton(icon = Icons.Default.Check, text = "Aplicar", onClick = {
                                             isLoading = true
                                             coroutineScope.launch {
-                                                val newCroppedBitmap = adjustedPoints?.let { points ->
-                                                    withContext(Dispatchers.Default) {
-                                                        cropAndWarp(detectionResult!!.originalBitmap, points)
-                                                    }
-                                                }
+                                                val newCroppedBitmap = adjustedPoints?.let { points -> withContext(Dispatchers.Default) { cropAndWarp(detectionResult!!.originalBitmap, points) } }
                                                 launch(Dispatchers.Main) {
                                                     croppedBitmap = newCroppedBitmap
                                                     isLoading = false
-                                                    cropState = CropScreenState.CROP_PREVIEW
+                                                    editState = CropScreenState.CROP_PREVIEW
                                                 }
                                             }
-                                        },
-                                        enabled = adjustedPoints != null && !isLoading
-                                    )
+                                        }, enabled = adjustedPoints != null && !isLoading)
+                                    }
                                 }
                             }
                         }
                     }
                 }
+            }
+            ScannerFlowState.FINAL_REVIEW -> {
+                // La barra de herramientas ahora se gestiona dentro de FinalReviewScreen
             }
         }
 
 
         if (isLoading) {
-            CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+            bitmapForProcessing?.let { ProcessingAnimation(modifier = Modifier.fillMaxSize(), bitmap = it) } ?: CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
         }
     }
 }
+
+
+// Composable para la animación de carga que simula IA
+@Composable
+fun ProcessingAnimation(
+    modifier: Modifier = Modifier,
+    bitmap: Bitmap
+) {
+    val infiniteTransition = rememberInfiniteTransition()
+
+    // Animación para la posición de la línea de escaneo
+    val scanLinePosition by infiniteTransition.animateFloat(
+        initialValue = -0.1f, // Empieza fuera de la pantalla
+        targetValue = 1.1f, // Termina fuera de la pantalla
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 2000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        )
+    )
+
+    // Animación para el parpadeo de los puntos de la rejilla
+    val dotAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.3f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 700),
+            repeatMode = RepeatMode.Reverse
+        )
+    )
+
+    Box(
+        modifier = modifier
+            .background(Color.Black.copy(alpha = 0.8f))
+            .fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        // Muestra la imagen que se está procesando en el fondo, atenuada
+        Image(
+            bitmap = bitmap.asImageBitmap(),
+            contentDescription = "Procesando Imagen",
+            contentScale = ContentScale.Fit,
+            modifier = Modifier.fillMaxSize(),
+            alpha = 0.4f
+        )
+
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val canvasWidth = size.width
+            val canvasHeight = size.height
+
+            // Dibuja la rejilla de puntos
+            val gridSize = 25
+            val dotRadius = 1.5.dp.toPx()
+            for (i in 0..gridSize) {
+                for (j in 0..gridSize) {
+                    val x = (canvasWidth / gridSize) * i
+                    val y = (canvasHeight / gridSize) * j
+                    // Hace que algunos puntos parpadeen más que otros para un efecto dinámico
+                    val currentAlpha = if ((i + j) % 2 == 0) dotAlpha else dotAlpha * 0.5f
+                    drawCircle(
+                        color = Color(0xFF30D5C8).copy(alpha = (Math.random() * currentAlpha).toFloat()),
+                        radius = dotRadius,
+                        center = Offset(x, y)
+                    )
+                }
+            }
+
+            // Dibuja la línea de escaneo con un gradiente
+            val yPos = scanLinePosition * canvasHeight
+            drawLine(
+                brush = Brush.verticalGradient(
+                    colors = listOf(Color.Transparent, Color(0xFF30D5C8).copy(alpha = 0.7f), Color.Transparent),
+                ),
+                start = Offset(0f, yPos),
+                end = Offset(canvasWidth, yPos),
+                strokeWidth = 3.dp.toPx()
+            )
+        }
+
+        Text(
+            "Analizando documento...",
+            color = Color.White,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
+
 
 @Composable
 private fun ActionButton(
@@ -681,7 +809,7 @@ private fun applyScannerLightFilter(bitmap: Bitmap, contrast: Float): Bitmap {
     return resultBitmap
 }
 
-private fun findBestSizeAndProcess(sourceBitmap: Bitmap, logUpdater: (String) -> Unit): DetectionResult? {
+private fun findBestSizeAndProcess(sourceBitmap: Bitmap): DetectionResult? {
     val sizesToTest = listOf(240.0, 320.0, 480.0, 640.0, 800.0, 960.0, 1080.0, 1200.0)
     var bestWidth = 0.0
     var maxQuads = -1
@@ -900,5 +1028,36 @@ private fun isGoodQuadrilateral(contour: MatOfPoint2f): Boolean {
         }
     }
     return true
+}
+
+// AÑADIDO: Utilidad para compartir un Bitmap
+private fun shareBitmap(context: Context, bitmap: Bitmap) {
+    val cachePath = File(context.cacheDir, "images")
+    cachePath.mkdirs()
+    val file = File(cachePath, "shared_image.png")
+    val fileOutputStream = FileOutputStream(file)
+    bitmap.compress(Bitmap.CompressFormat.PNG, 100, fileOutputStream)
+    fileOutputStream.close()
+
+    val fileUri: Uri? = try {
+        FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            file
+        )
+    } catch (e: IllegalArgumentException) {
+        Log.e("FileSharing", "File URI creation failed.", e)
+        null
+    }
+
+    fileUri?.let {
+        val shareIntent = Intent().apply {
+            action = Intent.ACTION_SEND
+            putExtra(Intent.EXTRA_STREAM, it)
+            type = "image/png"
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(shareIntent, "Compartir documento"))
+    }
 }
 
