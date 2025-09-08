@@ -1,8 +1,13 @@
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.pdf.PdfDocument
 import android.net.Uri
+import android.os.Build
+import android.provider.MediaStore
 import android.util.Log
+import android.widget.Toast
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -33,8 +38,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Undo
@@ -42,14 +50,17 @@ import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -75,8 +86,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
+import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 
 private enum class ViewMode { LIST, GRID }
 
@@ -90,9 +103,11 @@ fun FinalReviewScreen(
     var bitmaps by remember { mutableStateOf(initialBitmaps) }
     var isMarkupMode by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
 
     var viewMode by remember { mutableStateOf(ViewMode.LIST) }
     var selectedIndex by remember { mutableStateOf<Int?>(if (bitmaps.isNotEmpty()) 0 else null) }
+    var showShareSheet by remember { mutableStateOf(false) }
 
     Box(
         modifier = Modifier
@@ -183,10 +198,77 @@ fun FinalReviewScreen(
                     ActionButton(icon = Icons.Default.Add, text = "Agregar", onClick = onAddAnotherScan)
                     ActionButton(icon = Icons.Default.Edit, text = "Editar", enabled = selectedIndex != null, onClick = { selectedIndex?.let { onEditRequest(it) } })
                     ActionButton(icon = Icons.Default.Brush, text = "Markup", enabled = selectedIndex != null, onClick = { isMarkupMode = true })
-                    ActionButton(icon = Icons.Default.Share, text = "Compartir", enabled = selectedIndex != null, onClick = { selectedIndex?.let { shareBitmap(context, bitmaps[it]) } })
+                    ActionButton(icon = Icons.Default.Share, text = "Compartir", enabled = selectedIndex != null, onClick = { showShareSheet = true })
                 }
             }
         }
+
+        if (showShareSheet) {
+            ShareBottomSheet(
+                onDismiss = { showShareSheet = false },
+                onShareAsPdf = {
+                    coroutineScope.launch {
+                        showShareSheet = false
+                        val pdfUri = createPdfFromBitmapsAndGetUri(context, bitmaps)
+                        pdfUri?.let { uri ->
+                            shareUri(context, uri, "application/pdf")
+                        } ?: Toast.makeText(context, "Error al crear el PDF", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                onShareAsImage = {
+                    showShareSheet = false
+                    selectedIndex?.let { index ->
+                        shareBitmapAsImage(context, bitmaps[index])
+                    }
+                },
+                onSaveToGallery = {
+                    showShareSheet = false
+                    selectedIndex?.let { index ->
+                        saveBitmapToGallery(context, bitmaps[index], "Scan_${System.currentTimeMillis()}")
+                    }
+                }
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ShareBottomSheet(
+    onDismiss: () -> Unit,
+    onShareAsPdf: () -> Unit,
+    onShareAsImage: () -> Unit,
+    onSaveToGallery: () -> Unit
+) {
+    val modalBottomSheetState = rememberModalBottomSheetState()
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = modalBottomSheetState,
+        containerColor = Color(0xFF2C2C2E)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text("Compartir", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp, modifier = Modifier.padding(bottom = 8.dp))
+            ShareOption(icon = Icons.Default.Description, text = "Compartir como PDF (Todas las páginas)", onClick = onShareAsPdf)
+            ShareOption(icon = Icons.Default.Image, text = "Compartir como Imagen (Página actual)", onClick = onShareAsImage)
+            ShareOption(icon = Icons.Default.Download, text = "Guardar en Galería (Página actual)", onClick = onSaveToGallery)
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+    }
+}
+
+@Composable
+private fun ShareOption(icon: ImageVector, text: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(imageVector = icon, contentDescription = text, tint = Color.White)
+        Spacer(modifier = Modifier.width(16.dp))
+        Text(text, color = Color.White)
     }
 }
 
@@ -432,7 +514,17 @@ private fun ActionButton(
 }
 
 
-private fun shareBitmap(context: Context, bitmap: Bitmap) {
+private fun shareUri(context: Context, uri: Uri, mimeType: String) {
+    val shareIntent = Intent().apply {
+        action = Intent.ACTION_SEND
+        putExtra(Intent.EXTRA_STREAM, uri)
+        type = mimeType
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(Intent.createChooser(shareIntent, "Compartir documento"))
+}
+
+private fun shareBitmapAsImage(context: Context, bitmap: Bitmap) {
     val cachePath = File(context.cacheDir, "images")
     cachePath.mkdirs()
     val file = File(cachePath, "shared_image.png")
@@ -441,24 +533,80 @@ private fun shareBitmap(context: Context, bitmap: Bitmap) {
     fileOutputStream.close()
 
     val fileUri: Uri? = try {
-        FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.fileprovider",
-            file
-        )
+        FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
     } catch (e: IllegalArgumentException) {
         Log.e("FileSharing", "File URI creation failed.", e)
         null
     }
 
     fileUri?.let {
-        val shareIntent = Intent().apply {
-            action = Intent.ACTION_SEND
-            putExtra(Intent.EXTRA_STREAM, it)
-            type = "image/png"
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        shareUri(context, it, "image/png")
+    }
+}
+
+private fun saveBitmapToGallery(context: Context, bitmap: Bitmap, displayName: String) {
+    val contentValues = ContentValues().apply {
+        put(MediaStore.MediaColumns.DISPLAY_NAME, "$displayName.png")
+        put(MediaStore.MediaColumns.MIME_TYPE, "image/png")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            put(MediaStore.MediaColumns.RELATIVE_PATH, "Pictures/ScannedDocuments")
         }
-        context.startActivity(Intent.createChooser(shareIntent, "Compartir documento"))
+    }
+
+    val resolver = context.contentResolver
+    var uri: Uri? = null
+    try {
+        uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+        if (uri == null) {
+            throw IOException("Failed to create new MediaStore record.")
+        }
+        resolver.openOutputStream(uri)?.use { stream ->
+            if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)) {
+                throw IOException("Failed to save bitmap.")
+            }
+        }
+        Toast.makeText(context, "Guardado en Galería", Toast.LENGTH_SHORT).show()
+    } catch (e: IOException) {
+        if (uri != null) {
+            resolver.delete(uri, null, null)
+        }
+        Log.e("SaveToGallery", "Failed to save image", e)
+        Toast.makeText(context, "Error al guardar la imagen", Toast.LENGTH_SHORT).show()
+    }
+}
+
+private fun createPdfFromBitmapsAndGetUri(context: Context, bitmaps: List<Bitmap>): Uri? {
+    if (bitmaps.isEmpty()) return null
+
+    val pdfDocument = PdfDocument()
+    try {
+        bitmaps.forEachIndexed { index, bitmap ->
+            // A4 page size in points (1/72 inch)
+            val pageInfo = PdfDocument.PageInfo.Builder(595, 842, index + 1).create()
+            val page = pdfDocument.startPage(pageInfo)
+            val canvas = page.canvas
+
+            // Scale bitmap to fit page
+            val scale = (canvas.width.toFloat() / bitmap.width).coerceAtMost(canvas.height.toFloat() / bitmap.height)
+            val left = (canvas.width - bitmap.width * scale) / 2
+            val top = (canvas.height - bitmap.height * scale) / 2
+            val destRect = android.graphics.Rect(left.toInt(), top.toInt(), (left + bitmap.width * scale).toInt(), (top + bitmap.height * scale).toInt())
+            canvas.drawBitmap(bitmap, null, destRect, null)
+
+            pdfDocument.finishPage(page)
+        }
+
+        val cachePath = File(context.cacheDir, "documents")
+        cachePath.mkdirs()
+        val file = File(cachePath, "document.pdf")
+        pdfDocument.writeTo(FileOutputStream(file))
+
+        return FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+    } catch (e: Exception) {
+        Log.e("CreatePdf", "Error creating PDF", e)
+        return null
+    } finally {
+        pdfDocument.close()
     }
 }
 
