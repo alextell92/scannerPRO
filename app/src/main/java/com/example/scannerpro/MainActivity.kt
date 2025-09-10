@@ -2,9 +2,7 @@
 
 package com.example.scannerpro
 
-//import DocumentScannerScreen
 import DocumentScannerScreen
-//import SimpleCannyDetectorScreen
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -38,13 +36,17 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
-import androidx.navigation.compose.rememberNavController
-import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.example.scannerpro.ui.HomeScreen
+import com.example.scannerpro.ui.theme.ScannerPROTheme
 import org.opencv.android.OpenCVLoader
+
 //Rutas
 sealed class Screen(val route: String) {
     object Home : Screen("home")
@@ -53,7 +55,11 @@ sealed class Screen(val route: String) {
     object Usuario : Screen("usuario")
     object Acciones : Screen("herramientas")
 }
+
 data class BottomNavItem(@DrawableRes val iconRes: Int, val screen: Screen, val label: String)
+
+// Argumento para la pantalla de escaneo
+const val SCANNER_ARG_ID = "documentId"
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -63,13 +69,12 @@ class MainActivity : ComponentActivity() {
             Log.d("OpenCV", "OpenCV se ha cargado exitosamente.")
         } else {
             Log.e("OpenCV", "¡Error al cargar OpenCV!")
-
         }
         enableEdgeToEdge()
         setContent {
-            // Entrada de aplicacion
-            AppEntry()
-            //SimpleCannyDetectorScreen()
+            ScannerPROTheme {
+                AppEntry()
+            }
         }
     }
 }
@@ -77,22 +82,12 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun AppEntry() {
     val navController = rememberNavController()
-    val sample = listOf(
-        "Foto_2025_08_01.jpg",
-        "QR_1234567890",
-        "Documento_factura_001.pdf",
-        "Tarjeta_contacto.vcf",
-        "Imagen_duplicada_02.jpg",
-        "Foto_2025_08_01.jpg",
-        "QR_1234567890",
-        "Documento_factura_001.pdf",
-        "Tarjeta_contacto.vcf",
-        "Imagen_duplicada_02.jpg"
-    )
     val navBackStackEntry by navController.currentBackStackEntryAsState()
-    val rutaAcual = navBackStackEntry?.destination?.route
+    val currentRoute = navBackStackEntry?.destination?.route
+
     Scaffold(bottomBar = {
-        if (rutaAcual != Screen.Camara.route) {
+        // La barra de navegación no se muestra en la pantalla de la cámara/escáner
+        if (currentRoute?.startsWith(Screen.Camara.route) == false) {
             BottomBar(navController = navController)
         }
     }) { inner ->
@@ -103,67 +98,51 @@ fun AppEntry() {
         ) {
 
             composable(Screen.Home.route) {
-                HomeScreen(sample, { dest -> navController.navigate(dest) })
+                HomeScreen(
+                    onScanNewDocument = {
+                        // Navega al scanner para un nuevo documento (sin ID)
+                        navController.navigate(Screen.Camara.route)
+                    },
+                    onEditDocument = { documentId ->
+                        // Navega al scanner para editar un documento existente
+                        navController.navigate("${Screen.Camara.route}?$SCANNER_ARG_ID=$documentId")
+                    }
+                )
             }
+
             composable(Screen.Archivos.route) {
-                ArchivoView(
-                    irAHome = { navController.navigate(Screen.Archivos.route) },
-                    irAPantallaB = { navController.navigate(Screen.Archivos.route) },
-                    volver = { navController.popBackStack() })
+                ArchivoView(volver = { navController.popBackStack() })
             }
-            composable(Screen.Camara.route) {
+
+            composable(
+                // La ruta del escáner ahora acepta un argumento opcional.
+                route = "${Screen.Camara.route}?$SCANNER_ARG_ID={$SCANNER_ARG_ID}",
+                arguments = listOf(navArgument(SCANNER_ARG_ID) {
+                    type = NavType.LongType
+                    defaultValue = -1L // Valor que indica que no se está editando
+                })
+            ) { backStackEntry ->
+                val documentId = backStackEntry.arguments?.getLong(SCANNER_ARG_ID)
                 DocumentScannerScreen(
-                    onProcessingComplete = { bitmapResult ->
-                        // Esta lambda se llamará para cada página que el usuario
-                        // confirme con el botón "Agregar" o finalice.
-                        Log.d(
-                            "MainActivity",
-                            "Bitmap procesado recibido! Tamaño: ${bitmapResult.width}x${bitmapResult.height}"
-                        )
-
-                        // Si quieres que la app soporte múltiples escaneos,
-                        // aquí deberías guardar el 'bitmapResult' en una lista (por ejemplo, en un ViewModel)
-                        // en lugar de cerrar la pantalla.
-
-                        // Tu lógica actual para un solo escaneo (cerrar la pantalla) sigue funcionando.
-                        navController.popBackStack()
-                    },
+                    documentIdToEdit = if (documentId != -1L) documentId else null,
                     onClose = {
-                        // El usuario cierra la pantalla de escaneo.
+                        // La única acción de salida es volver a la pantalla anterior.
+                        // HomeScreen se actualizará sola gracias al Lifecycle event.
                         navController.popBackStack()
-                    },
-                    onAddAnotherScan = {
-                        // Esta lambda se llama justo antes de que la cámara se reactive
-                        // para escanear la siguiente página.
-                        // Puedes usarla para actualizar la UI, como un contador de páginas.
-                        // Por ahora, puede quedar vacía.
-                        Log.d("MainActivity", "Preparando para escanear otra página...")
                     }
                 )
             }
 
             composable(Screen.Acciones.route) {
-                AccionesView(
-                    irAHome = { navController.navigate(Screen.Acciones.route) },
-                    volver = { navController.popBackStack() })
+                AccionesView(volver = { navController.popBackStack() })
             }
 
             composable(Screen.Usuario.route) {
-                UsuarioView(
-                    irAHome = { navController.navigate(Screen.Usuario.route) },
-                    volver = { navController.popBackStack() })
+                UsuarioView(volver = { navController.popBackStack() })
             }
-
         }
     }
 }
-
-/**
- * HOME: ejemplo de layout responsivo:
- * - BoxWithConstraints para obtener maxWidth/maxHeight
- * - botones con ancho relativo fillMaxWidth(0.7f)
- * - texto con tamaño "aprox" derivado de maxWidth
- */
 
 
 /** BottomBar (footer) con items y manejo del estado seleccionado */
@@ -172,57 +151,57 @@ fun BottomBar(navController: androidx.navigation.NavHostController) {
     val items = listOf(
         BottomNavItem(R.drawable.hogar, Screen.Home, "Inicio"),
         BottomNavItem(R.drawable.expediente, Screen.Archivos, "Archivos"),
-        BottomNavItem(R.drawable.camara_fotografica, Screen.Camara, ""),
+        BottomNavItem(R.drawable.camara_fotografica, Screen.Camara, ""), // El botón central
         BottomNavItem(R.drawable.app, Screen.Acciones, "Acciones"),
         BottomNavItem(R.drawable.perfil, Screen.Usuario, "Usuario")
     )
     val navBackStackEntry by navController.currentBackStackEntryAsState()
-    navBackStackEntry?.destination
     val currentRoute = navBackStackEntry?.destination?.route
 
     NavigationBar {
-
         items.forEach { item ->
             val selected = currentRoute == item.screen.route
             NavigationBarItem(
                 selected = selected,
-
                 onClick = {
                     navController.navigate(item.screen.route) {
-                        // evita apilar destinos repetidos y restaura estado
                         popUpTo(navController.graph.findStartDestination().id) {
                             saveState = true
                         }
                         launchSingleTop = true
                         restoreState = true
                     }
-                }, icon = {
+                },
+                icon = {
                     Box(
                         modifier = Modifier
-                            .size(36.dp) // tamaño del círculo
+                            .size(if (item.label.isEmpty()) 56.dp else 36.dp) // Círculo más grande para la cámara
                             .background(
-                                color = if (selected) Color(0xFF4CAF50) // verde solo cuando está seleccionado
-                                else Color.Transparent, shape = CircleShape
-                            ), contentAlignment = Alignment.Center
+                                color = if (selected) Color(0xFF4CAF50)
+                                else Color.Transparent,
+                                shape = CircleShape
+                            ),
+                        contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             painter = painterResource(id = item.iconRes),
                             contentDescription = item.label,
-                            modifier = Modifier.size(20.dp), // tamaño real del ícono
-                            tint = if (selected) Color.White // ícono blanco cuando está activo
+                            modifier = Modifier.size(if (item.label.isEmpty()) 28.dp else 20.dp),
+                            tint = if (selected) Color.White
                             else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                         )
                     }
-                }, label = { Text(item.label) })
+                },
+                label = { if (item.label.isNotEmpty()) Text(item.label) }
+            )
         }
     }
 }
 
+// --- Vistas de ejemplo para las otras pestañas ---
+
 @Composable
-fun ArchivoView(irAHome: () -> Unit, irAPantallaB: () -> Unit, volver: () -> Unit) {
-    LocalConfiguration.current
-
-
+fun ArchivoView(volver: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -230,53 +209,14 @@ fun ArchivoView(irAHome: () -> Unit, irAPantallaB: () -> Unit, volver: () -> Uni
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text("Archivo", style = MaterialTheme.typography.titleLarge)
-        Spacer(modifier = Modifier.height(16.dp))
-
+        Text("Archivos", style = MaterialTheme.typography.titleLarge)
         Spacer(modifier = Modifier.height(8.dp))
-        Button(
-            onClick = volver, modifier = Modifier
-                .fillMaxWidth(0.7f)
-                .height(50.dp)
-        ) {
-            Text("Volver")
-        }
+        Button(onClick = volver) { Text("Volver") }
     }
 }
 
 @Composable
-fun CamaraView(irAHome: () -> Unit, volver: () -> Unit) {
-    LocalConfiguration.current
-
-
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text("Camara", style = MaterialTheme.typography.titleLarge)
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Spacer(modifier = Modifier.height(8.dp))
-        Button(
-            onClick = volver, modifier = Modifier
-                .fillMaxWidth(0.7f)
-                .height(50.dp)
-        ) {
-            Text("Volver")
-        }
-    }
-}
-
-
-@Composable
-fun AccionesView(irAHome: () -> Unit, volver: () -> Unit) {
-    LocalConfiguration.current
-
-
+fun AccionesView(volver: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -285,26 +225,13 @@ fun AccionesView(irAHome: () -> Unit, volver: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text("Acciones", style = MaterialTheme.typography.titleLarge)
-        Spacer(modifier = Modifier.height(16.dp))
-
         Spacer(modifier = Modifier.height(8.dp))
-        Button(
-            onClick = volver, modifier = Modifier
-                .fillMaxWidth(0.7f)
-                .height(50.dp)
-        ) {
-            Text("Volver")
-        }
+        Button(onClick = volver) { Text("Volver") }
     }
-
 }
 
-
 @Composable
-fun UsuarioView(irAHome: () -> Unit, volver: () -> Unit) {
-    LocalConfiguration.current
-
-
+fun UsuarioView(volver: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -313,53 +240,8 @@ fun UsuarioView(irAHome: () -> Unit, volver: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text("Usuario", style = MaterialTheme.typography.titleLarge)
-        Spacer(modifier = Modifier.height(16.dp))
-
         Spacer(modifier = Modifier.height(8.dp))
-        Button(
-            onClick = volver, modifier = Modifier
-                .fillMaxWidth(0.7f)
-                .height(50.dp)
-        ) {
-            Text("Volver")
-        }
+        Button(onClick = volver) { Text("Volver") }
     }
 }
-
-
-//@Composable
-//fun AppNavHost() {
-//    val navController = rememberNavController()
-//
-//    NavHost(navController, startDestination = "home") {
-//
-//        composable("home") {
-//            HomeView(
-//                onNavigateToList = { navController.navigate("list") },
-//                onNavigateToDetail = { navController.navigate("detail/0") },
-//                onNavigateTest = { navController.navigate("test") }
-//            )
-//        }
-//
-//        composable("list") {
-//            ListScreen(onItemClick = { itemId ->
-//                navController.navigate("detail/$itemId")
-//            })
-//        }
-//
-//        composable("test") {
-//            Testvista(
-//                onBack = { navController.popBackStack() }
-//            )
-//        }
-//
-//        composable(
-//            "detail/{itemId}",
-//            arguments = listOf(navArgument("itemId") { type = NavType.IntType })
-//        ) { backStackEntry ->
-//            val itemId = backStackEntry.arguments?.getInt("itemId") ?: 0
-//            DetailScreen(itemId)
-//        }
-//    }
-//}
 
