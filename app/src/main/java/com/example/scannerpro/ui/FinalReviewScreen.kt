@@ -35,6 +35,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.CornerSize
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Cancel
@@ -95,6 +96,7 @@ import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import androidx.compose.material.icons.filled.ArrowBack
 
 private enum class ViewMode { LIST, GRID }
 
@@ -145,6 +147,22 @@ fun FinalReviewScreen(
                             color = Color.White
                         )
                     },
+                    navigationIcon = {
+                        if (isSelectionModeActive) {
+                            // 1. Si está en modo selección, el botón "atrás" cancela la selección
+                            IconButton(onClick = {
+                                isSelectionModeActive = false
+                                selectedIndices = emptySet()
+                            }) {
+                                Icon(Icons.Default.ArrowBack, "Cancelar selección", tint = Color.White)
+                            }
+                        } else {
+                            // 2. Si está en modo normal, el botón "atrás" llama a onFinish (para ir a Home)
+                            IconButton(onClick = onFinish) { // <-- ¡LÍNEA CORREGIDA!
+                                Icon(Icons.Default.ArrowBack, "Volver a Home", tint = Color.White)
+                            }
+                        }
+                    },
                     actions = {
                         if (isSelectionModeActive) {
                             IconButton(onClick = {
@@ -152,12 +170,7 @@ fun FinalReviewScreen(
                             }) {
                                 Icon(Icons.Default.SelectAll, "Seleccionar todo", tint = Color.White)
                             }
-                            IconButton(onClick = {
-                                isSelectionModeActive = false
-                                selectedIndices = emptySet()
-                            }) {
-                                Icon(Icons.Default.Cancel, "Cancelar", tint = Color.White)
-                            }
+                            // --- HEMOS QUITADO EL BOTÓN DE CANCELAR (X) DE AQUÍ ---
                         } else {
                             IconButton(onClick = { isSelectionModeActive = true }) {
                                 Icon(Icons.Default.CheckBox, "Seleccionar", tint = Color.White)
@@ -246,9 +259,13 @@ fun FinalReviewScreen(
                     .height(80.dp)
             ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth() ,
+
+
                     horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
+
+
                 ) {
                     if (isSelectionModeActive) {
                         ActionButton(icon = Icons.Default.Delete, text = "Eliminar", enabled = selectedIndices.isNotEmpty(), onClick = {

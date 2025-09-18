@@ -270,7 +270,8 @@ fun DocumentScannerScreen(
                     CropScreenState.CROP_PREVIEW -> {
                         filteredBitmap?.let {
                             Box(modifier = Modifier.fillMaxSize().background(Color(0xFF1C1C1E)), contentAlignment = Alignment.Center) {
-                                Image(bitmap = it.asImageBitmap(), contentDescription = "Documento recortado", contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize().padding(horizontal = 56.dp, vertical = 130.dp))
+                                Image(bitmap = it.asImageBitmap(), contentDescription = "Documento recortado", contentScale = ContentScale.Fit,
+                                    modifier = Modifier.fillMaxSize().padding(horizontal = 56.dp).padding(top=100.dp, bottom = 160.dp))
                             }
                         }
                     }
@@ -299,12 +300,29 @@ fun DocumentScannerScreen(
             }
         }
 
-        val closeAction = { onClose() }
-        IconButton(onClick = closeAction, modifier = Modifier.align(Alignment.TopStart).padding(16.dp)) {
-            Icon(Icons.Default.Close, "Cerrar", tint = Color.White, modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).padding(8.dp))
-        }
+//        val closeAction = { onClose() }
+//        IconButton(onClick = closeAction, modifier = Modifier.align(Alignment.TopStart).padding(16.dp)) {
+//            Icon(Icons.Default.Close, "Cerrar", tint = Color.White, modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).padding(8.dp))
+//        }
 
-        if (flowState == ScannerFlowState.CAMERA && hasCamPermission) {
+        if (flowState == ScannerFlowState.CAMERA && hasCamPermission && flowState != ScannerFlowState.FINAL_REVIEW) {
+
+            IconButton(
+                onClick = onClose, // onClose es el parámetro que ya recibe DocumentScannerScreen
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(16.dp)
+            )
+            {
+                Icon(
+                    imageVector = Icons.Default.Close, // (Asegúrate de importar Icons.Default.Close)
+                    contentDescription = "Cerrar",
+                    tint = Color.White,
+                    modifier = Modifier
+                        .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                        .padding(8.dp)
+                )
+            }
             IconButton(onClick = { isFlashOn = !isFlashOn }, modifier = Modifier.align(Alignment.TopEnd).padding(16.dp)) {
                 Icon(if (isFlashOn) Icons.Default.FlashOn else Icons.Default.FlashOff, "Flash", tint = Color.White, modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).padding(8.dp))
             }
@@ -339,7 +357,7 @@ fun DocumentScannerScreen(
                         }
                     } else {
                         if (editState == CropScreenState.CROP_PREVIEW) {
-                            BottomAppBar(containerColor = Color(0xFF1C1C1E).copy(alpha = 0.8f), contentColor = Color.White, contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.height(60.dp)) {
+                            BottomAppBar(containerColor = Color(0xFF1C1C1E).copy(alpha = 0.8f), contentColor = Color.White, contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.height(80.dp)) {
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
                                     FilterActionButton(text = "Original", isSelected = selectedFilter == FilterType.NONE, onClick = { selectedFilter = FilterType.NONE })
                                     FilterActionButton(text = "Luz Escáner", isSelected = selectedFilter == FilterType.SCANNER_LIGHT, onClick = {
@@ -539,6 +557,21 @@ fun InteractiveDocumentView(bitmap: Bitmap, initialPoints: List<Point>, onPoints
     }
 }
 
+
+
+@Composable
+private fun CameraPreview(modifier: Modifier = Modifier, onUseCase: (Preview) -> Unit) {
+    AndroidView(modifier = modifier, factory = { context ->
+        val previewView = PreviewView(context).apply {
+            layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            scaleType = PreviewView.ScaleType.FILL_CENTER
+        }
+        onUseCase(Preview.Builder().build().also { it.setSurfaceProvider(previewView.surfaceProvider) })
+        previewView
+    })
+}
+
+
 private fun takePhoto(context: Context, imageCapture: ImageCapture, isFlashOn: Boolean, onPhotoTaken: (Bitmap) -> Unit) {
     imageCapture.flashMode = if (isFlashOn) ImageCapture.FLASH_MODE_ON else ImageCapture.FLASH_MODE_OFF
     val executor = ContextCompat.getMainExecutor(context)
@@ -565,17 +598,6 @@ fun Bitmap.rotate(degrees: Float): Bitmap {
     return Bitmap.createBitmap(this, 0, 0, width, height, matrix, true)
 }
 
-@Composable
-private fun CameraPreview(modifier: Modifier = Modifier, onUseCase: (Preview) -> Unit) {
-    AndroidView(modifier = modifier, factory = { context ->
-        val previewView = PreviewView(context).apply {
-            layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-            scaleType = PreviewView.ScaleType.FILL_CENTER
-        }
-        onUseCase(Preview.Builder().build().also { it.setSurfaceProvider(previewView.surfaceProvider) })
-        previewView
-    })
-}
 
 private fun applyScannerLightFilter(bitmap: Bitmap, contrast: Float): Bitmap {
     val srcMat = Mat()
@@ -816,32 +838,3 @@ private fun isGoodQuadrilateral(contour: MatOfPoint2f): Boolean {
     return true
 }
 
-private fun shareBitmap(context: Context, bitmap: Bitmap) {
-    val cachePath = File(context.cacheDir, "images")
-    cachePath.mkdirs()
-    val file = File(cachePath, "shared_image.png")
-    val fileOutputStream = FileOutputStream(file)
-    bitmap.compress(Bitmap.CompressFormat.PNG, 100, fileOutputStream)
-    fileOutputStream.close()
-
-    val fileUri: Uri? = try {
-        FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.fileprovider",
-            file
-        )
-    } catch (e: IllegalArgumentException) {
-        Log.e("FileSharing", "File URI creation failed.", e)
-        null
-    }
-
-    fileUri?.let {
-        val shareIntent = Intent().apply {
-            action = Intent.ACTION_SEND
-            putExtra(Intent.EXTRA_STREAM, it)
-            type = "image/png"
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        context.startActivity(Intent.createChooser(shareIntent, "Compartir documento"))
-    }
-}

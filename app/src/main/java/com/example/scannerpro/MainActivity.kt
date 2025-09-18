@@ -3,6 +3,7 @@
 package com.example.scannerpro
 
 import DocumentScannerScreen
+import android.content.Context
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -10,32 +11,60 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DriveFileMove
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.MergeType
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.SelectAll
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.ViewList
+import androidx.compose.material.icons.filled.ViewModule
+import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -44,10 +73,13 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.example.scannerpro.ui.HomeScreen
+import com.example.scannerpro.ui.HomeUiState
+import com.example.scannerpro.ui.HomeViewModel
 import com.example.scannerpro.ui.theme.ScannerPROTheme
 import org.opencv.android.OpenCVLoader
 
-//Rutas
+// --- Clases de Navegación y Modelo ---
+
 sealed class Screen(val route: String) {
     object Home : Screen("home")
     object Camara : Screen("camara")
@@ -58,13 +90,17 @@ sealed class Screen(val route: String) {
 
 data class BottomNavItem(@DrawableRes val iconRes: Int, val screen: Screen, val label: String)
 
-// Argumento para la pantalla de escaneo
 const val SCANNER_ARG_ID = "documentId"
+
+// --- Estado de Vista (Movido aquí para que AppEntry lo controle) ---
+enum class ViewMode { LIST, GRID }
+private const val VIEW_MODE_PREFS = "view_mode_preferences"
+private const val KEY_VIEW_MODE = "key_view_mode"
+
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // --- 1. INICIAR OPENCV ---
         if (OpenCVLoader.initLocal()) {
             Log.d("OpenCV", "OpenCV se ha cargado exitosamente.")
         } else {
@@ -79,18 +115,77 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppEntry() {
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
-    Scaffold(bottomBar = {
-        // La barra de navegación no se muestra en la pantalla de la cámara/escáner
-        if (currentRoute?.startsWith(Screen.Camara.route) == false) {
-            BottomBar(navController = navController)
-        }
-    }) { inner ->
+    // --- 1. ESTADO Y VIEWMODEL ELEVADOS ---
+    val homeViewModel: HomeViewModel = viewModel()
+    val uiState by homeViewModel.uiState.collectAsState()
+    var selectedDocumentIds by remember { mutableStateOf(emptySet<Long>()) }
+    val isSelectionModeActive = selectedDocumentIds.isNotEmpty()
+    var showMoreMenuSheet by remember { mutableStateOf(false) }
+
+    // Estado de ViewMode (Lista/Grid) ahora vive aquí
+    val context = LocalContext.current
+    val sharedPreferences = remember {
+        context.getSharedPreferences(VIEW_MODE_PREFS, Context.MODE_PRIVATE)
+    }
+    var viewMode by remember {
+        val savedModeName = sharedPreferences.getString(KEY_VIEW_MODE, ViewMode.LIST.name)
+        mutableStateOf(ViewMode.valueOf(savedModeName ?: ViewMode.LIST.name))
+    }
+
+
+    Scaffold(
+        topBar = {
+            // --- 2. TOPBAR CONDICIONAL ---
+            if (currentRoute?.startsWith(Screen.Camara.route) == false) {
+                if (isSelectionModeActive) {
+                    // TopBar de Selección
+                    SelectionTopBar(
+                        selectedCount = selectedDocumentIds.size,
+                        onClearSelection = { selectedDocumentIds = emptySet() },
+                        onSelectAll = {
+                            val allIds = uiState.documents.map { it.document.id }.toSet()
+                            selectedDocumentIds = if (selectedDocumentIds == allIds) emptySet() else allIds
+                        }
+                    )
+                } else {
+                    // TopBar Normal (con el botón de vista)
+                    NormalTopBar(
+                        viewMode = viewMode,
+                        onViewModeToggle = {
+                            val newMode = if (viewMode == ViewMode.LIST) ViewMode.GRID else ViewMode.LIST
+                            viewMode = newMode
+                            sharedPreferences.edit().putString(KEY_VIEW_MODE, newMode.name).apply()
+                        }
+                    )
+                }
+            }
+        },
+        bottomBar = {
+            // --- 3. BOTTOMBAR CONDICIONAL ---
+            if (currentRoute?.startsWith(Screen.Camara.route) == false) {
+                if (isSelectionModeActive) {
+                    // Barra de Acciones de Selección
+                    SelectionBottomBar(
+                        selectedCount = selectedDocumentIds.size,
+                        onShareClick = { /* TODO */ },
+                        onCombineClick = { /* TODO */ },
+                        onRenameClick = { /* TODO */ },
+                        onDeleteClick = { /* TODO */ },
+                        onMoreClick = { showMoreMenuSheet = true }
+                    )
+                } else {
+                    // Barra de Navegación Principal (tu función original)
+                    BottomBar(navController = navController)
+                }
+            }
+        }) { inner ->
         NavHost(
             navController = navController,
             startDestination = Screen.Home.route,
@@ -98,54 +193,73 @@ fun AppEntry() {
         ) {
 
             composable(Screen.Home.route) {
+                // --- 4. PASAMOS TODO EL ESTADO A HOMESCREEN ---
                 HomeScreen(
+                    homeViewModel = homeViewModel,
+                    uiState = uiState,
+                    selectedDocumentIds = selectedDocumentIds,
+                    isSelectionModeActive = isSelectionModeActive,
+                    viewMode = viewMode, // Pasamos el modo de vista
+                    onToggleSelection = { id ->
+                        selectedDocumentIds = if (id in selectedDocumentIds) {
+                            selectedDocumentIds - id
+                        } else {
+                            selectedDocumentIds + id
+                        }
+                    },
+                    onStartSelection = { id ->
+                        selectedDocumentIds = setOf(id)
+                    },
                     onScanNewDocument = {
-                        // Navega al scanner para un nuevo documento (sin ID)
+                        selectedDocumentIds = emptySet()
                         navController.navigate(Screen.Camara.route)
                     },
                     onEditDocument = { documentId ->
-                        // Navega al scanner para editar un documento existente
+                        selectedDocumentIds = emptySet()
                         navController.navigate("${Screen.Camara.route}?$SCANNER_ARG_ID=$documentId")
                     }
                 )
             }
 
-            composable(Screen.Archivos.route) {
-                ArchivoView(volver = { navController.popBackStack() })
-            }
-
-            composable(
-                // La ruta del escáner ahora acepta un argumento opcional.
-                route = "${Screen.Camara.route}?$SCANNER_ARG_ID={$SCANNER_ARG_ID}",
-                arguments = listOf(navArgument(SCANNER_ARG_ID) {
-                    type = NavType.LongType
-                    defaultValue = -1L // Valor que indica que no se está editando
-                })
-            ) { backStackEntry ->
+            // ... (Resto de tus rutas)
+            composable(Screen.Archivos.route) { ArchivoView(volver = { navController.popBackStack() }) }
+            composable( route = "${Screen.Camara.route}?$SCANNER_ARG_ID={$SCANNER_ARG_ID}", arguments = listOf(navArgument(SCANNER_ARG_ID) { type = NavType.LongType; defaultValue = -1L }) ) { backStackEntry ->
                 val documentId = backStackEntry.arguments?.getLong(SCANNER_ARG_ID)
                 DocumentScannerScreen(
                     documentIdToEdit = if (documentId != -1L) documentId else null,
-                    onClose = {
-                        // La única acción de salida es volver a la pantalla anterior.
-                        // HomeScreen se actualizará sola gracias al Lifecycle event.
-                        navController.popBackStack()
-                    }
+                    onClose = { navController.popBackStack() }
                 )
             }
+            composable(Screen.Acciones.route) { AccionesView(volver = { navController.popBackStack() }) }
+            composable(Screen.Usuario.route) { UsuarioView(volver = { navController.popBackStack() }) }
+        }
+    }
 
-            composable(Screen.Acciones.route) {
-                AccionesView(volver = { navController.popBackStack() })
-            }
-
-            composable(Screen.Usuario.route) {
-                UsuarioView(volver = { navController.popBackStack() })
+    // --- 5. MENÚ DESLIZABLE (SHEET) PARA "MÁS" ---
+    if (showMoreMenuSheet) {
+        val sheetState = rememberModalBottomSheetState()
+        ModalBottomSheet(
+            onDismissRequest = { showMoreMenuSheet = false },
+            sheetState = sheetState
+        ) {
+            Column(Modifier.padding(bottom = 32.dp)) {
+                SheetActionItem(
+                    icon = Icons.Default.DriveFileMove,
+                    text = "Mover",
+                    onClick = { /* TODO */ ; showMoreMenuSheet = false }
+                )
+                SheetActionItem(
+                    icon = Icons.Default.MoreVert,
+                    text = "Opción Futura 1",
+                    onClick = { /* TODO */ ; showMoreMenuSheet = false }
+                )
             }
         }
     }
 }
 
 
-/** BottomBar (footer) con items y manejo del estado seleccionado */
+/** BottomBar (footer) principal - ESTA ES TU FUNCIÓN ORIGINAL COMPLETA */
 @Composable
 fun BottomBar(navController: androidx.navigation.NavHostController) {
     val items = listOf(
@@ -165,9 +279,7 @@ fun BottomBar(navController: androidx.navigation.NavHostController) {
                 selected = selected,
                 onClick = {
                     navController.navigate(item.screen.route) {
-                        popUpTo(navController.graph.findStartDestination().id) {
-                            saveState = true
-                        }
+                        popUpTo(navController.graph.findStartDestination().id) { saveState = true }
                         launchSingleTop = true
                         restoreState = true
                     }
@@ -175,7 +287,7 @@ fun BottomBar(navController: androidx.navigation.NavHostController) {
                 icon = {
                     Box(
                         modifier = Modifier
-                            .size(if (item.label.isEmpty()) 56.dp else 36.dp) // Círculo más grande para la cámara
+                            .size(if (item.label.isEmpty()) 56.dp else 36.dp)
                             .background(
                                 color = if (selected) Color(0xFF4CAF50)
                                 else Color.Transparent,
@@ -198,50 +310,135 @@ fun BottomBar(navController: androidx.navigation.NavHostController) {
     }
 }
 
-// --- Vistas de ejemplo para las otras pestañas ---
-
-@Composable
-fun ArchivoView(volver: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
+// --- Vistas de ejemplo ---
+@Composable fun ArchivoView(volver: () -> Unit) {
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
         Text("Archivos", style = MaterialTheme.typography.titleLarge)
         Spacer(modifier = Modifier.height(8.dp))
         Button(onClick = volver) { Text("Volver") }
     }
 }
-
-@Composable
-fun AccionesView(volver: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
+@Composable fun AccionesView(volver: () -> Unit) {
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
         Text("Acciones", style = MaterialTheme.typography.titleLarge)
         Spacer(modifier = Modifier.height(8.dp))
         Button(onClick = volver) { Text("Volver") }
     }
 }
-
-@Composable
-fun UsuarioView(volver: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
+@Composable fun UsuarioView(volver: () -> Unit) {
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
         Text("Usuario", style = MaterialTheme.typography.titleLarge)
         Spacer(modifier = Modifier.height(8.dp))
         Button(onClick = volver) { Text("Volver") }
     }
 }
 
+
+// --- 6. COMPOSABLES PARA BARRAS Y MENÚS DE SELECCIÓN ---
+
+@Composable
+private fun NormalTopBar(
+    viewMode: ViewMode,
+    onViewModeToggle: () -> Unit
+) {
+    TopAppBar(
+        title = { Text("Mis Documentos") },
+        actions = {
+            IconButton(onClick = onViewModeToggle) {
+                Icon(
+                    imageVector = if (viewMode == ViewMode.LIST) Icons.Default.ViewModule else Icons.Default.ViewList,
+                    contentDescription = "Cambiar vista"
+                )
+            }
+        }
+    )
+}
+
+@Composable
+private fun SelectionTopBar(
+    selectedCount: Int,
+    onClearSelection: () -> Unit,
+    onSelectAll: () -> Unit
+) {
+    TopAppBar(
+        title = { Text("$selectedCount seleccionado(s)") },
+        navigationIcon = {
+            IconButton(onClick = onClearSelection) {
+                Icon(Icons.Default.ArrowBack, contentDescription = "Cancelar selección")
+            }
+        },
+        actions = {
+            IconButton(onClick = onSelectAll) {
+                Icon(Icons.Default.SelectAll, contentDescription = "Seleccionar todo")
+            }
+        }
+    )
+}
+
+@Composable
+private fun SelectionBottomBar(
+    selectedCount: Int,
+    onShareClick: () -> Unit,
+    onCombineClick: () -> Unit,
+    onRenameClick: () -> Unit,
+    onDeleteClick: () -> Unit,
+    onMoreClick: () -> Unit
+) {
+    BottomAppBar(
+        actions = {
+            BottomActionItem(modifier = Modifier.weight(1f), icon = Icons.Default.Share, text = "Compartir", onClick = onShareClick)
+
+            if (selectedCount > 1) {
+                BottomActionItem(modifier = Modifier.weight(1f), icon = Icons.Default.MergeType, text = "Combinar", onClick = onCombineClick)
+            }
+
+            if (selectedCount == 1) {
+                BottomActionItem(modifier = Modifier.weight(1f), icon = Icons.Default.Edit, text = "Nombre", onClick = onRenameClick)
+            }
+
+            BottomActionItem(modifier = Modifier.weight(1f), icon = Icons.Default.Delete, text = "Eliminar", onClick = onDeleteClick)
+
+            // --- CORRECCIÓN DEL TYPO ---
+            BottomActionItem(modifier = Modifier.weight(1f), icon = Icons.Default.MoreVert, text = "Más", onClick = onMoreClick)
+        }
+    )
+}
+
+@Composable
+private fun BottomActionItem(
+    modifier: Modifier = Modifier,
+    icon: ImageVector,
+    text: String,
+    onClick: () -> Unit
+) {
+    Column(
+        modifier = modifier
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(icon, contentDescription = text)
+        Spacer(Modifier.height(4.dp))
+        Text(text, fontSize = 12.sp, maxLines = 1)
+    }
+}
+
+@Composable
+private fun SheetActionItem(
+    icon: ImageVector,
+    text: String,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(imageVector = icon, contentDescription = text)
+        Spacer(modifier = Modifier.width(16.dp))
+        Text(text)
+    }
+}
