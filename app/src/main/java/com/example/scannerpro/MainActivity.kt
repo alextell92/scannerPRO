@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material.icons.filled.ViewModule
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
@@ -48,6 +49,7 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -128,6 +130,10 @@ fun AppEntry() {
     var selectedDocumentIds by remember { mutableStateOf(emptySet<Long>()) }
     val isSelectionModeActive = selectedDocumentIds.isNotEmpty()
     var showMoreMenuSheet by remember { mutableStateOf(false) }
+    var showRenameDialog by remember { mutableStateOf(false) }
+
+    var showDeleteDialog by remember { mutableStateOf(false) } // <-- 1. AÑADE ESTE ESTADO
+
 
     // Estado de ViewMode (Lista/Grid) ahora vive aquí
     val context = LocalContext.current
@@ -175,9 +181,24 @@ fun AppEntry() {
                     SelectionBottomBar(
                         selectedCount = selectedDocumentIds.size,
                         onShareClick = { /* TODO */ },
-                        onCombineClick = { /* TODO */ },
-                        onRenameClick = { /* TODO */ },
-                        onDeleteClick = { /* TODO */ },
+                        onCombineClick = {
+                            if (selectedDocumentIds.size > 1) {
+                                // Ordenamos para tener un "destino" predecible (ej. el doc más antiguo)
+                                val sortedIds = selectedDocumentIds.sorted()
+                                val targetDocumentId = sortedIds.first()
+                                val sourceDocumentIds = sortedIds.drop(1).toSet()
+
+                                homeViewModel.mergeDocuments(targetDocumentId, sourceDocumentIds)
+                                selectedDocumentIds = emptySet() // Limpiar selección
+                            }
+                        },
+                        onRenameClick = { showRenameDialog = true },
+                        onDeleteClick = {
+                            if (selectedDocumentIds.isNotEmpty()) {
+                                // 1. Llama al ViewModel para borrar
+                                showDeleteDialog = true // <-- Solo muestra el diálogo
+                            }
+                        },
                         onMoreClick = { showMoreMenuSheet = true }
                     )
                 } else {
@@ -255,6 +276,42 @@ fun AppEntry() {
                 )
             }
         }
+    }
+
+    // --- 6. DIÁLOGO DE RENOMBRAR ---
+    if (showRenameDialog) {
+        // El botón de renombrar solo es visible cuando hay 1 ítem seleccionado
+        val documentIdToRename = selectedDocumentIds.firstOrNull()
+        val documentToRename = uiState.documents.find { it.document.id == documentIdToRename }
+
+        if (documentIdToRename != null && documentToRename != null) {
+            RenameDocumentDialog(
+                currentName = documentToRename.document.name,
+                onDismiss = { showRenameDialog = false },
+                onConfirm = { newName ->
+                    // Asumimos que homeViewModel tiene esta función
+                    homeViewModel.renameDocument(documentIdToRename, newName)
+                    showRenameDialog = false
+                    selectedDocumentIds = emptySet() // Limpiar selección
+                }
+            )
+        } else {
+            // Si algo sale mal (ej. el documento desaparece), solo cerramos el diálogo
+            showRenameDialog = false
+        }
+    }
+    if (showDeleteDialog) {
+        DeleteConfirmationDialog(
+            documentCount = selectedDocumentIds.size,
+            onDismiss = { showDeleteDialog = false },
+            onConfirm = {
+                if (selectedDocumentIds.isNotEmpty()) {
+                    homeViewModel.deleteDocuments(selectedDocumentIds)
+                    selectedDocumentIds = emptySet()
+                }
+                showDeleteDialog = false
+            }
+        )
     }
 }
 
@@ -358,7 +415,7 @@ private fun NormalTopBar(
 private fun SelectionTopBar(
     selectedCount: Int,
     onClearSelection: () -> Unit,
-    onSelectAll: () -> Unit
+    onSelectAll: () -> Unit // <-- AQUÍ ESTABA EL ERROR (DECÍA '()...')
 ) {
     TopAppBar(
         title = { Text("$selectedCount seleccionado(s)") },
@@ -441,4 +498,79 @@ private fun SheetActionItem(
         Spacer(modifier = Modifier.width(16.dp))
         Text(text)
     }
+}
+
+// --- 7. COMPOSABLE DE DIÁLOGO ---
+
+@Composable
+fun RenameDocumentDialog(
+    currentName: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    var text by remember { mutableStateOf(currentName) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Cambiar nombre") },
+        text = {
+            TextField(
+                value = text,
+                onValueChange = { text = it },
+                label = { Text("Nombre del documento") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (text.isNotBlank()) {
+                        onConfirm(text)
+                    }
+                }
+            ) {
+                Text("Guardar")
+            }
+        },
+        dismissButton = {
+            Button(onClick = onDismiss) {
+                Text("Cancelar")
+            }
+        }
+    )
+}
+
+
+@Composable
+fun DeleteConfirmationDialog(
+    documentCount: Int,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit
+) {
+    val title = if (documentCount == 1) "Eliminar documento" else "Eliminar $documentCount documentos"
+    val text = if (documentCount == 1)
+        "¿Estás seguro de que quieres eliminar este documento? Esta acción no se puede deshacer."
+    else
+        "¿Estás seguro de que quieres eliminar estos $documentCount documentos? Esta acción no se puede deshacer."
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = { Text(text) },
+        confirmButton = {
+            Button(
+                onClick = onConfirm
+                // Opcional: Dale un color rojo
+                // colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+            ) {
+                Text("Eliminar")
+            }
+        },
+        dismissButton = {
+            Button(onClick = onDismiss) {
+                Text("Cancelar")
+            }
+        }
+    )
 }

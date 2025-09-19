@@ -1,6 +1,7 @@
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.util.Log
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Embedded
@@ -12,6 +13,7 @@ import androidx.room.Query
 import androidx.room.Relation
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.Transaction
 import androidx.room.Update
 import java.io.File
 import java.io.FileOutputStream
@@ -69,6 +71,39 @@ interface DocumentDao {
 
     @Query("SELECT * FROM documents ORDER BY createdAt DESC")
     suspend fun getAllDocumentsWithPages(): List<DocumentWithPages>
+
+    @Query("UPDATE documents SET name = :newName WHERE id = :documentId")
+    suspend fun updateDocumentName(documentId: Long, newName: String)
+
+    @Transaction
+    suspend fun mergeDocumentsTransaction(targetDocumentId: Long, sourceDocumentIds: Set<Long>) {
+        // Paso 1: Reasigna todas las páginas de los documentos fuente al documento destino
+        reassignPages(targetDocumentId, sourceDocumentIds)
+
+        // Paso 2: Borra los documentos fuente, que ahora están vacíos
+        deleteDocuments(sourceDocumentIds)
+    }
+
+    @Query("UPDATE pages SET documentId = :targetDocumentId WHERE documentId IN (:sourceDocumentIds)")
+    suspend fun reassignPages(targetDocumentId: Long, sourceDocumentIds: Set<Long>)
+
+    @Query("DELETE FROM documents WHERE id IN (:documentIds)")
+    suspend fun deleteDocuments(documentIds: Set<Long>)
+
+    @Query("DELETE FROM pages WHERE documentId IN (:documentIds)")
+    suspend fun deletePagesForDocuments(documentIds: Set<Long>)
+
+    @Transaction
+    @Query("SELECT * FROM documents WHERE id IN (:documentIds)")
+    suspend fun getDocumentsWithPagesByIds(documentIds: Set<Long>): List<DocumentWithPages>
+    @Transaction
+    suspend fun deleteDocumentsAndPages(documentIds: Set<Long>) {
+        // 1. Borra las páginas (los hijos)
+        deletePagesForDocuments(documentIds)
+        // 2. Borra los documentos (los padres)
+        deleteDocuments(documentIds)
+    }
+
 }
 
 // --- BASE DE DATOS (ROOM) ---
@@ -158,5 +193,43 @@ class DocumentRepository(private val context: Context, private val documentDao: 
     suspend fun getAllDocumentsWithPages(): List<DocumentWithPages> {
         return documentDao.getAllDocumentsWithPages()
     }
+    // Dentro de tu clase DocumentRepository
+// (Asegúrate de que documentDao sea accesible aquí)
+
+    suspend fun renameDocument(documentId: Long, newName: String) {
+        // Llama a la función del DAO (que crearás en el paso 2)
+        documentDao.updateDocumentName(documentId, newName)
+    }
+
+    // Dentro de tu clase DocumentRepository
+
+    suspend fun mergeDocuments(targetDocumentId: Long, sourceDocumentIds: Set<Long>) {
+        // Llama a la función transaccional del DAO (que crearás en el paso 4)
+        documentDao.mergeDocumentsTransaction(targetDocumentId, sourceDocumentIds)
+    }
+    suspend fun deleteDocuments(documentIds: Set<Long>) {
+        // 1. Obtener todos los documentos y páginas (esto está bien)
+        val documentsToDelete = documentDao.getDocumentsWithPagesByIds(documentIds)
+
+        // 2. Borrar los archivos físicos (dijiste que esto funciona, ¡perfecto!)
+        documentsToDelete.forEach { docWithPages ->
+            docWithPages.pages.forEach { page ->
+                try {
+                    val file = File(page.filePath)
+                    if (file.exists()) {
+                        file.delete()
+                    }
+                } catch (e: Exception) {
+                    Log.e("DocumentRepository", "Error deleting file: ${page.filePath}", e)
+                }
+            }
+        }
+
+        // --- 3. CORRECCIÓN DE LA LÓGICA DE BORRADO ---
+        // En lugar de solo borrar los documentos (que falla),
+        // llamamos a una nueva transacción que borra páginas Y documentos.
+        documentDao.deleteDocumentsAndPages(documentIds)
+    }
+
 }
 
