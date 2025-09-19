@@ -288,10 +288,16 @@ fun DocumentScannerScreen(
                 when(editState) {
                     CropScreenState.CROP_PREVIEW -> {
                         filteredBitmap?.let {
+                            // ########## INICIO DE CORRECCIÓN 1 ##########
+                            // Calcula el padding inferior dinámicamente
+                            // 80dp (slider) + 80dp (acciones) = 160dp
+                            // 60dp (filtros) + 80dp (acciones) = 140dp
+                            val bottomPadding = if (isAdjustingFilterIntensity) 160.dp else 140.dp
+
                             Box(modifier = Modifier.fillMaxSize().background(Color(0xFF1C1C1E)), contentAlignment = Alignment.Center) {
-                                Image(bitmap = it.asImageBitmap(), contentDescription = "Documento recortado", contentScale = ContentScale.Fit,
-                                    modifier = Modifier.fillMaxSize().padding(horizontal = 56.dp).padding(top=100.dp, bottom = 160.dp))
+                                Image(bitmap = it.asImageBitmap(), contentDescription = "Documento recortado", contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize().padding(horizontal = 56.dp, vertical = 130.dp))
                             }
+                            // ########## FIN DE CORRECCIÓN 1 ##########
                         }
                     }
                     CropScreenState.MANUAL_ADJUST -> {
@@ -383,7 +389,9 @@ fun DocumentScannerScreen(
                 }
             }
             ScannerFlowState.EDITING -> {
+                // ########## INICIO DE CORRECCIÓN 2 ##########
                 Column(modifier = Modifier.align(Alignment.BottomCenter)) {
+                    // Esta sección (Slider o Filtros) se muestra en la parte SUPERIOR de la columna
                     if (isAdjustingFilterIntensity) {
                         BottomAppBar(containerColor = Color(0xFF1C1C1E).copy(alpha = 0.95f), contentColor = Color.White, contentPadding = PaddingValues(horizontal = 16.dp), modifier = Modifier.height(80.dp)) {
                             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -407,50 +415,56 @@ fun DocumentScannerScreen(
                                 }
                             }
                         }
-                        BottomAppBar(containerColor = Color(0xFF2C2C2E), contentColor = Color.White, modifier = Modifier.height(80.dp)) {
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-                                when (editState) {
-                                    CropScreenState.CROP_PREVIEW -> {
-                                        ActionButton(icon = Icons.Default.PhotoLibrary, text = "Importar", onClick = { photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) })
-                                        ActionButton(icon = Icons.Default.RotateLeft, text = "Girar", onClick = { croppedBitmap?.let { croppedBitmap = it.rotate(-90f) } })
-                                        ActionButton(icon = Icons.Default.Crop, text = "Recortar", onClick = { editState = CropScreenState.MANUAL_ADJUST })
-                                        ActionButton(icon = Icons.Default.Check, text = "Ok", onClick = {
-                                            coroutineScope.launch {
-                                                filteredBitmap?.let { editedBitmap ->
-                                                    isLoading = true
-                                                    if (editingBitmapIndex != null) {
-                                                        documentRepository.updatePageInDocument(currentDocumentId!!, editingBitmapIndex!!, editedBitmap)
-                                                    } else if (currentDocumentId != null) {
-                                                        documentRepository.addPageToDocument(currentDocumentId!!, editedBitmap)
-                                                    } else {
-                                                        currentDocumentId = documentRepository.createDocumentAndAddFirstPage(editedBitmap)
-                                                    }
-                                                    scannedBitmaps = documentRepository.getDocumentPages(currentDocumentId!!)
-                                                    isLoading = false
-                                                    flowState = ScannerFlowState.FINAL_REVIEW
+                        // La barra de acciones (abajo) se MOVIÓ FUERA de este bloque 'else'
+                    }
+
+                    // Esta BottomAppBar (Acciones) AHORA ESTÁ FUERA del 'else',
+                    // por lo que se muestra SIEMPRE en el estado de EDICIÓN,
+                    // debajo del Slider o de los Filtros.
+                    BottomAppBar(containerColor = Color(0xFF2C2C2E), contentColor = Color.White, modifier = Modifier.height(80.dp)) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+                            when (editState) {
+                                CropScreenState.CROP_PREVIEW -> {
+                                    ActionButton(icon = Icons.Default.PhotoLibrary, text = "Importar", onClick = { photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) })
+                                    ActionButton(icon = Icons.Default.RotateLeft, text = "Girar", onClick = { croppedBitmap?.let { croppedBitmap = it.rotate(-90f) } })
+                                    ActionButton(icon = Icons.Default.Crop, text = "Recortar", onClick = { editState = CropScreenState.MANUAL_ADJUST })
+                                    ActionButton(icon = Icons.Default.Check, text = "Ok", onClick = {
+                                        coroutineScope.launch {
+                                            filteredBitmap?.let { editedBitmap ->
+                                                isLoading = true
+                                                if (editingBitmapIndex != null) {
+                                                    documentRepository.updatePageInDocument(currentDocumentId!!, editingBitmapIndex!!, editedBitmap)
+                                                } else if (currentDocumentId != null) {
+                                                    documentRepository.addPageToDocument(currentDocumentId!!, editedBitmap)
+                                                } else {
+                                                    currentDocumentId = documentRepository.createDocumentAndAddFirstPage(editedBitmap)
                                                 }
+                                                scannedBitmaps = documentRepository.getDocumentPages(currentDocumentId!!)
+                                                isLoading = false
+                                                flowState = ScannerFlowState.FINAL_REVIEW
                                             }
-                                        }, enabled = filteredBitmap != null && !isLoading)
-                                    }
-                                    CropScreenState.MANUAL_ADJUST -> {
-                                        ActionButton(icon = Icons.Default.AutoFixHigh, text = "Automático", onClick = { detectionResult?.originalBitmap?.let { runDetectionAndCrop(it) } })
-                                        ActionButton(icon = Icons.Default.Check, text = "Aplicar", onClick = {
-                                            isLoading = true
-                                            coroutineScope.launch {
-                                                val newCroppedBitmap = detectionResult?.let { withContext(Dispatchers.Default) { cropAndWarp(it.originalBitmap, it.cornerPoints) } }
-                                                launch(Dispatchers.Main) {
-                                                    croppedBitmap = newCroppedBitmap
-                                                    isLoading = false
-                                                    editState = CropScreenState.CROP_PREVIEW
-                                                }
+                                        }
+                                    }, enabled = filteredBitmap != null && !isLoading)
+                                }
+                                CropScreenState.MANUAL_ADJUST -> {
+                                    ActionButton(icon = Icons.Default.AutoFixHigh, text = "Automático", onClick = { detectionResult?.originalBitmap?.let { runDetectionAndCrop(it) } })
+                                    ActionButton(icon = Icons.Default.Check, text = "Aplicar", onClick = {
+                                        isLoading = true
+                                        coroutineScope.launch {
+                                            val newCroppedBitmap = detectionResult?.let { withContext(Dispatchers.Default) { cropAndWarp(it.originalBitmap, it.cornerPoints) } }
+                                            launch(Dispatchers.Main) {
+                                                croppedBitmap = newCroppedBitmap
+                                                isLoading = false
+                                                editState = CropScreenState.CROP_PREVIEW
                                             }
-                                        }, enabled = !isLoading)
-                                    }
+                                        }
+                                    }, enabled = !isLoading)
                                 }
                             }
                         }
                     }
                 }
+                // ########## FIN DE CORRECCIÓN 2 ##########
             }
             ScannerFlowState.FINAL_REVIEW -> {
                 // La barra de herramientas se gestiona dentro de FinalReviewScreen
