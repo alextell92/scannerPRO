@@ -5,6 +5,7 @@ appcompat = "1.7.1"
 cameraView = "1.4.2"
 coilCompose = "2.7.0"
 coreKtxVersion = "1.10.1"
+foundationPager = "1.1.0-beta02"
 hiltAndroid = "2.57.1"
 kotlin = "2.0.21"
 coreKtx = "1.15.0"
@@ -35,6 +36,7 @@ androidx-camera-camera2 = { module = "androidx.camera:camera-camera2", version.r
 androidx-camera-core = { module = "androidx.camera:camera-core", version.ref = "cameraView" }
 androidx-camera-lifecycle = { module = "androidx.camera:camera-lifecycle", version.ref = "cameraView" }
 androidx-camera-view = { module = "androidx.camera:camera-view", version.ref = "cameraView" }
+androidx-compose-foundation-pager = { module = "androidx.compose.foundation:foundation-pager", version.ref = "foundationPager" }
 androidx-compose-material3-material3 = { module = "androidx.compose.material3:material3" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-core-ktx-v1101 = { module = "androidx.core:core-ktx", version.ref = "coreKtxVersion" }
