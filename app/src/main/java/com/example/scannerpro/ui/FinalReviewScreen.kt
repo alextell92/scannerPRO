@@ -97,6 +97,23 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Archive
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
+
+
+
+import androidx.compose.material.icons.filled.DragHandle
+import androidx.compose.ui.graphics.graphicsLayer
+import org.burnoutcrew.composereorderable.ReorderableItem
+import org.burnoutcrew.composereorderable.dragHandle
+import org.burnoutcrew.composereorderable.rememberReorderableLazyGridState
+import org.burnoutcrew.composereorderable.rememberReorderableLazyListState
+import org.burnoutcrew.composereorderable.ReorderableLazyColumn
+import org.burnoutcrew.composereorderable.ReorderableLazyVerticalGrid
+
+
+
 
 private enum class ViewMode { LIST, GRID }
 
@@ -113,7 +130,9 @@ fun FinalReviewScreen(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
-    var viewMode by remember { mutableStateOf(ViewMode.LIST) }
+    var viewMode by remember {
+        mutableStateOf(AppPreferences.getViewMode(context))
+    }
     var selectedIndex by remember { mutableStateOf<Int?>(if (bitmaps.isNotEmpty()) 0 else null) }
     var showShareSheet by remember { mutableStateOf(false) }
 
@@ -125,6 +144,7 @@ fun FinalReviewScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
+
             .background(Color(0xFF1C1C1E))
     ) {
         if (isMarkupMode) {
@@ -139,7 +159,7 @@ fun FinalReviewScreen(
             }
         } else {
             // Vista de revisión normal con lista/cuadrícula
-            Column(modifier = Modifier.fillMaxSize()) {
+            Column(modifier = Modifier.fillMaxSize().  padding(bottom = 80.dp)) {
                 TopAppBar(
                     title = {
                         Text(
@@ -177,6 +197,8 @@ fun FinalReviewScreen(
                             }
                             IconButton(onClick = {
                                 viewMode = if (viewMode == ViewMode.LIST) ViewMode.GRID else ViewMode.LIST
+                                // 2. GUARDAMOS la nueva preferencia
+                                AppPreferences.setViewMode(context, viewMode)
                             }) {
                                 Icon(
                                     imageVector = if (viewMode == ViewMode.LIST) Icons.Default.GridView else Icons.Default.List,
@@ -196,24 +218,32 @@ fun FinalReviewScreen(
                             .padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
-                        itemsIndexed(bitmaps, key = { _, item -> item.hashCode() }) { index, bitmap ->
-                            BitmapListItem(
-                                bitmap = bitmap,
-                                pageNumber = index + 1,
-                                isSelected = if (isSelectionModeActive) index in selectedIndices else selectedIndex == index,
-                                isSelectionModeActive = isSelectionModeActive,
-                                onClick = {
-                                    if (isSelectionModeActive) {
-                                        selectedIndices = if (index in selectedIndices) {
-                                            selectedIndices - index
+                        val count = bitmaps.size
+                        items(count + 1, key = { index -> if (index < count) bitmaps[index].hashCode() else "add_button_list" }) { index ->
+                            if (index < count) {
+                                // Es una página existente
+                                val bitmap = bitmaps[index]
+                                BitmapListItem(
+                                    bitmap = bitmap,
+                                    pageNumber = index + 1,
+                                    isSelected = if (isSelectionModeActive) index in selectedIndices else selectedIndex == index,
+                                    isSelectionModeActive = isSelectionModeActive,
+                                    onClick = {
+                                        if (isSelectionModeActive) {
+                                            selectedIndices = if (index in selectedIndices) {
+                                                selectedIndices - index
+                                            } else {
+                                                selectedIndices + index
+                                            }
                                         } else {
-                                            selectedIndices + index
+                                            selectedIndex = index
                                         }
-                                    } else {
-                                        selectedIndex = index
                                     }
-                                }
-                            )
+                                )
+                            } else {
+                                // Es el botón de "Añadir Página"
+                                AddPageListItem(onClick = onAddAnotherScan)
+                            }
                         }
                     }
                 } else { // GRID View
@@ -225,28 +255,38 @@ fun FinalReviewScreen(
                         verticalArrangement = Arrangement.spacedBy(16.dp),
                         horizontalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
-                        itemsIndexed(bitmaps, key = { _, item -> item.hashCode() }) { index, bitmap ->
-                            BitmapGridItem(
-                                bitmap = bitmap,
-                                pageNumber = index + 1,
-                                isSelected = if (isSelectionModeActive) index in selectedIndices else selectedIndex == index,
-                                isSelectionModeActive = isSelectionModeActive,
-                                onClick = {
-                                    if (isSelectionModeActive) {
-                                        selectedIndices = if (index in selectedIndices) {
-                                            selectedIndices - index
+                        val count = bitmaps.size
+                        // Usamos items(count + 1) en lugar de itemsIndexed
+                        items(count + 1, key = { index -> if (index < count) bitmaps[index].hashCode() else "add_button_grid" }) { index ->
+                            if (index < count) {
+                                // Es una página existente
+                                val bitmap = bitmaps[index]
+                                BitmapGridItem(
+                                    bitmap = bitmap,
+                                    pageNumber = index + 1,
+                                    isSelected = if (isSelectionModeActive) index in selectedIndices else selectedIndex == index,
+                                    isSelectionModeActive = isSelectionModeActive,
+                                    onClick = {
+                                        if (isSelectionModeActive) {
+                                            selectedIndices = if (index in selectedIndices) {
+                                                selectedIndices - index
+                                            } else {
+                                                selectedIndices + index
+                                            }
                                         } else {
-                                            selectedIndices + index
+                                            selectedIndex = index
                                         }
-                                    } else {
-                                        selectedIndex = index
                                     }
-                                }
-                            )
+                                )
+                            } else {
+                                // Es el botón de "Añadir Página"
+                                AddPageGridItem(onClick = onAddAnotherScan)
+                            }
                         }
                     }
                 }
-            }
+                }
+
         }
 
 
@@ -260,11 +300,8 @@ fun FinalReviewScreen(
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth() ,
-
-
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically,
-
 
                 ) {
                     if (isSelectionModeActive) {
@@ -288,14 +325,14 @@ fun FinalReviewScreen(
         if (showShareSheet) {
             ShareBottomSheet(
                 onDismiss = { showShareSheet = false },
+                selectionCount = selectedIndices.size, // <-- PASAMOS EL CONTEO
+
                 onShareAsPdf = {
                     coroutineScope.launch {
                         showShareSheet = false
-                        val bitmapsToShare = if (selectedIndices.isEmpty() && selectedIndex != null) {
-                            listOf(bitmaps[selectedIndex!!])
-                        } else {
-                            bitmaps.filterIndexed { index, _ -> index in selectedIndices }
-                        }
+                        // Lógica simplificada: siempre usamos selectedIndices
+                        val bitmapsToShare = bitmaps.filterIndexed { index, _ -> index in selectedIndices }
+
                         if (bitmapsToShare.isNotEmpty()) {
                             val pdfUri = createPdfFromBitmapsAndGetUri(context, bitmapsToShare)
                             pdfUri?.let { uri ->
@@ -304,16 +341,37 @@ fun FinalReviewScreen(
                         }
                     }
                 },
-                onShareAsImage = {
-                    showShareSheet = false
-                    selectedIndex?.let { index ->
-                        shareBitmapAsImage(context, bitmaps[index])
-                    }
-                },
+
                 onSaveToGallery = {
                     showShareSheet = false
-                    selectedIndex?.let { index ->
-                        saveBitmapToGallery(context, bitmaps[index], "Scan_${System.currentTimeMillis()}")
+                    // ¡AQUÍ ESTÁ EL ARREGLO PRINCIPAL!
+                    // Iteramos sobre los índices seleccionados y guardamos cada uno
+                    if (selectedIndices.isNotEmpty()) {
+                        selectedIndices.forEach { index ->
+                            val bitmap = bitmaps[index]
+                            // Damos un nombre único a cada archivo
+                            saveBitmapToGallery(context, bitmap, "Scan_${System.currentTimeMillis()}_p${index + 1}")
+                        }
+                    }
+                },
+                onShareImages = {
+                    coroutineScope.launch {
+                        showShareSheet = false
+                        val bitmapsToShare = bitmaps.filterIndexed { index, _ -> index in selectedIndices }
+
+                        if (bitmapsToShare.size == 1) {
+                            // --- LÓGICA DE 1 IMAGEN ---
+                            val singleBitmap = bitmapsToShare.first()
+                            shareBitmapAsImage(context, singleBitmap)
+
+                        } else if (bitmapsToShare.size > 1) {
+                            // --- LÓGICA DE 2+ IMÁGENES (ZIP) ---
+                            val zipUri = createZipFromBitmapsAndGetUri(context, bitmapsToShare, "escaneo.zip")
+
+                            zipUri?.let { uri ->
+                                shareUri(context, uri, "application/zip")
+                            } ?: Toast.makeText(context, "Error al crear el ZIP", Toast.LENGTH_SHORT).show()
+                        }
                     }
                 }
             )
@@ -326,8 +384,10 @@ fun FinalReviewScreen(
 private fun ShareBottomSheet(
     onDismiss: () -> Unit,
     onShareAsPdf: () -> Unit,
-    onShareAsImage: () -> Unit,
-    onSaveToGallery: () -> Unit
+    onShareImages: () -> Unit,
+    onSaveToGallery: () -> Unit,
+
+    selectionCount: Int
 ) {
     val modalBottomSheetState = rememberModalBottomSheetState()
 
@@ -338,23 +398,41 @@ private fun ShareBottomSheet(
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text("Compartir", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp, modifier = Modifier.padding(bottom = 8.dp))
-            ShareOption(icon = Icons.Default.Description, text = "Compartir como PDF (Selección)", onClick = onShareAsPdf)
-            ShareOption(icon = Icons.Default.Image, text = "Compartir como Imagen (Página actual)", onClick = onShareAsImage)
-            ShareOption(icon = Icons.Default.Download, text = "Guardar en Galería (Página actual)", onClick = onSaveToGallery)
-            Spacer(modifier = Modifier.height(16.dp))
+            ShareOption(icon = Icons.Default.Description, text = "Compartir como PDF (Selección)", onClick = onShareAsPdf, enabled = selectionCount > 0)
+
+            ShareOption(
+                icon = Icons.Default.Image, // Siempre el ícono de imagen
+                // El texto cambia dinámicamente para informar al usuario
+                text = if (selectionCount == 1) "Compartir como Imagen" else "Compartir como ZIP ($selectionCount pág.)",
+                onClick = onShareImages,
+                enabled = selectionCount > 0
+            )
+            ShareOption(
+                icon = Icons.Default.Download,
+                text = "Guardar en Galería (Selección)", // <-- Texto actualizado
+                onClick = onSaveToGallery,
+                enabled = selectionCount > 0
+            )
+
+           // ShareOption(icon = Icons.Default.Description, text = "Compartir como PDF (Selección)", onClick = onShareAsPdf)
+//            ShareOption(icon = Icons.Default.Image, text = "Compartir como Imagen (Página actual)", onClick = onShareAsImage)
+//            ShareOption(icon = Icons.Default.Download, text = "Guardar en Galería (Página actual)", onClick = onSaveToGallery)
+              Spacer(modifier = Modifier.height(16.dp))
         }
     }
 }
 
 @Composable
-private fun ShareOption(icon: ImageVector, text: String, onClick: () -> Unit) {
+private fun ShareOption(icon: ImageVector, text: String, onClick: () -> Unit, enabled: Boolean = true) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        val tint = if (enabled) Color.White else Color.Gray // <-- COLOR CONDICIONAL
+
         Icon(imageVector = icon, contentDescription = text, tint = Color.White)
         Spacer(modifier = Modifier.width(16.dp))
         Text(text, color = Color.White)
@@ -741,3 +819,149 @@ private fun createPdfFromBitmapsAndGetUri(context: Context, bitmaps: List<Bitmap
     }
 }
 
+
+@Composable
+private fun AddPageListItem(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(120.dp)
+            .clip(CircleShape.copy(all = CornerSize(8.dp)))
+            .background(Color.DarkGray)
+            .border(
+                2.dp,
+                Color(0xFF444444), // Un borde gris para distinguirlo
+                shape = CircleShape.copy(all = CornerSize(8.dp))
+            )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(
+                imageVector = Icons.Default.Add,
+                contentDescription = "Añadir Página",
+                tint = Color.Gray,
+                modifier = Modifier.size(40.dp)
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text("Añadir Página", color = Color.Gray)
+        }
+    }
+}
+
+@Composable
+private fun AddPageGridItem(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    // Este Box imita el contenedor de BitmapGridItem
+    Box(
+        modifier = modifier
+            .clip(CircleShape.copy(all = CornerSize(8.dp)))
+            .background(Color.DarkGray)
+            .border(
+                2.dp,
+                Color(0xFF444444),
+                shape = CircleShape.copy(all = CornerSize(8.dp))
+            )
+            .clickable(onClick = onClick)
+            .padding(8.dp) // Igual que en BitmapGridItem
+            .fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        // Esta Columna interior imita la de BitmapGridItem para mantener la proporción
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(1f / 1.41f), // Mantiene la proporción A4
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.Add,
+                contentDescription = "Añadir Página",
+                tint = Color.Gray,
+                modifier = Modifier.size(40.dp)
+            )
+            Spacer(Modifier.height(8.dp))
+            Text("Añadir Página", color = Color.Gray, fontSize = 12.sp)
+        }
+    }
+}
+
+
+/**
+ * Crea un archivo ZIP a partir de una lista de bitmaps y devuelve su URI.
+ */
+private fun createZipFromBitmapsAndGetUri(context: Context, bitmaps: List<Bitmap>, fileName: String = "documento.zip"): Uri? {
+    if (bitmaps.isEmpty()) return null
+
+    // Define la ruta del archivo en la caché
+    val cachePath = File(context.cacheDir, "documents")
+    cachePath.mkdirs()
+    val zipFile = File(cachePath, fileName)
+
+    try {
+        // Abre los streams para el archivo ZIP
+        val fos = FileOutputStream(zipFile)
+        val zipOut = ZipOutputStream(fos)
+
+        // Itera sobre cada bitmap para añadirlo al ZIP
+        bitmaps.forEachIndexed { index, bitmap ->
+            // Define un nombre para el archivo dentro del ZIP (ej. pagina_1.png)
+            val entryName = "pagina_${index + 1}.png"
+            val zipEntry = ZipEntry(entryName)
+
+            // Añade la nueva entrada (archivo) al ZIP
+            zipOut.putNextEntry(zipEntry)
+
+            // Comprime el bitmap (en formato PNG para mantener calidad)
+            // directamente en el stream del ZIP
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, zipOut)
+
+            // Cierra la entrada actual
+            zipOut.closeEntry()
+        }
+
+        // Cierra el stream ZIP (¡importante!)
+        zipOut.close()
+        fos.close()
+
+        // Devuelve la URI del FileProvider para el archivo .zip
+        return FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", zipFile)
+
+    } catch (e: IOException) {
+        Log.e("CreateZip", "Error creando el archivo ZIP", e)
+        return null
+    }
+}
+
+// ... (al final de tu archivo, después de la última '}')
+
+/**
+ * Gestiona las preferencias simples de la app usando SharedPreferences.
+ */
+private object AppPreferences {
+    private const val PREFS_NAME = "scanner_prefs"
+    private const val KEY_VIEW_MODE = "view_mode"
+
+    /**
+     * Guarda la preferencia del modo de vista (LIST o GRID).
+     */
+    fun setViewMode(context: Context, mode: ViewMode) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putString(KEY_VIEW_MODE, mode.name).apply()
+    }
+
+    /**
+     * Obtiene la preferencia guardada. Si no existe, devuelve LIST.
+     */
+    fun getViewMode(context: Context): ViewMode {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        // Usamos LIST.name como valor por defecto si no se encuentra nada
+        val modeName = prefs.getString(KEY_VIEW_MODE, ViewMode.LIST.name)
+        // Convertimos el nombre (String) de nuevo a nuestro enum ViewMode
+        return try {
+            ViewMode.valueOf(modeName ?: ViewMode.LIST.name)
+        } catch (e: IllegalArgumentException) {
+            ViewMode.LIST
+        }
+    }
+}

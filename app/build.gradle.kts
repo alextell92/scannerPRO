@@ -106,11 +106,7 @@ dependencies {
     // A veces, los íconos extendidos son necesarios si usas otros más específicos
     implementation(libs.androidx.material.icons.extended)
 
-    //implementation(libs.reorderable)
 
-
-    //noinspection UseTomlInstead
-    implementation(libs.reorderable)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
@@ -119,4 +115,8 @@ dependencies {
     androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
+
+    //Arrastrar y soltar
+    implementation(libs.reorderable)
+
     }

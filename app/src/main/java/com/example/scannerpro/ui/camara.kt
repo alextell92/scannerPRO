@@ -209,15 +209,34 @@ fun DocumentScannerScreen(
         isLoading = true
         bitmapForProcessing = bitmapToProcess
         coroutineScope.launch(Dispatchers.Default) {
-            val result = findBestSizeAndProcess(bitmapToProcess)
+
+            // Intenta la detección automática
+            var result = findBestSizeAndProcess(bitmapToProcess)
+
+            // Variable para decidir a qué pantalla ir
+            var initialEditState = CropScreenState.CROP_PREVIEW
+
+            // ¡AQUÍ ESTÁ EL CAMBIO!
+            // Si la detección falla (resultado nulo o sin puntos), crea un resultado genérico
+            if (result == null || result.cornerPoints.isEmpty()) {
+                Log.d("DocumentScanner", "Detección automática falló. Creando rectángulo genérico.")
+                val defaultPoints = getDefaultCornerPoints(bitmapToProcess, marginPercent = 0.2f) // 20% de margen
+                result = DetectionResult(originalBitmap = bitmapToProcess, cornerPoints = defaultPoints)
+
+                // Como la detección falló, forzamos al usuario a ajustar manualmente
+                initialEditState = CropScreenState.MANUAL_ADJUST
+            }
+
+            // Procede a recortar con los puntos (automáticos o genéricos)
+            // Si la detección falló, esto recortará la imagen con el margen del 20%
             val newCroppedBitmap = result?.let { cropAndWarp(it.originalBitmap, it.cornerPoints) }
 
             launch(Dispatchers.Main) {
-                detectionResult = result
+                detectionResult = result // ¡Ahora 'detectionResult' NUNCA será nulo!
                 croppedBitmap = newCroppedBitmap
                 isLoading = false
                 bitmapForProcessing = null
-                editState = CropScreenState.CROP_PREVIEW
+                editState = initialEditState // <--- Estado inicial (MANUAL_ADJUST si falló)
                 selectedFilter = FilterType.SCANNER_LIGHT
                 flowState = ScannerFlowState.EDITING
             }
@@ -290,6 +309,12 @@ fun DocumentScannerScreen(
                     onAddAnotherScan = { resetToCameraState() },
                     onEditRequest = { index ->
                         val bitmapToEdit = scannedBitmaps[index]
+
+                        detectionResult = DetectionResult(
+                            originalBitmap = bitmapToEdit,
+                            cornerPoints = getDefaultCornerPoints(bitmapToEdit, 0.05f)
+                        )
+
                         croppedBitmap = bitmapToEdit
                         selectedFilter = FilterType.NONE
                         editingBitmapIndex = index
@@ -307,8 +332,21 @@ fun DocumentScannerScreen(
 
         if (flowState == ScannerFlowState.CAMERA && hasCamPermission && flowState != ScannerFlowState.FINAL_REVIEW) {
 
+
+            val closeAction: () -> Unit = {
+                // Si ya tenemos bitmaps escaneados (scannedBitmaps no está vacío),
+                // significa que venimos de "FinalReviewScreen". Debemos volver allí.
+                if (scannedBitmaps.isNotEmpty()) {
+                    flowState = ScannerFlowState.FINAL_REVIEW
+                } else {
+                    // Si no hay bitmaps, es la primera vez que abrimos la cámara.
+                    // Salimos a "Home".
+                    onClose()
+                }
+            }
+
             IconButton(
-                onClick = onClose, // onClose es el parámetro que ya recibe DocumentScannerScreen
+                onClick = closeAction, // onClose es el parámetro que ya recibe DocumentScannerScreen
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .padding(16.dp)
@@ -836,5 +874,27 @@ private fun isGoodQuadrilateral(contour: MatOfPoint2f): Boolean {
         }
     }
     return true
+}
+
+
+/**
+ * Crea una lista de puntos de esquina genéricos con un margen,
+ * en caso de que la detección automática falle.
+ */
+private fun getDefaultCornerPoints(bitmap: Bitmap, marginPercent: Float = 0.2f): List<Point> {
+    val width = bitmap.width.toDouble()
+    val height = bitmap.height.toDouble()
+
+    // Calcula el margen en píxeles
+    val marginX = width * marginPercent
+    val marginY = height * marginPercent
+
+    // Devuelve los 4 puntos: TL, TR, BR, BL
+    return listOf(
+        Point(marginX, marginY), // Top-left
+        Point(width - marginX, marginY), // Top-right
+        Point(width - marginX, height - marginY), // Bottom-right
+        Point(marginX, height - marginY)  // Bottom-left
+    )
 }
 
