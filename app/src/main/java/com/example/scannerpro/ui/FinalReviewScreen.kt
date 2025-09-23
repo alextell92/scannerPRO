@@ -111,6 +111,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitTouchSlopOrCancellation
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateMapOf
@@ -119,6 +120,8 @@ import androidx.compose.foundation.verticalScroll
 
 import androidx.compose.foundation.pager.VerticalPager // <-- ¡NUEVO!
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.material3.Surface
+
 // ... (y todas las demás que ya tenías)
 
 private enum class ViewMode { LIST, GRID }
@@ -178,7 +181,7 @@ fun FinalReviewScreen(
                 )
         } else {
             // Vista de revisión normal con lista/cuadrícula
-            Column(modifier = Modifier.fillMaxSize().  padding(bottom = 80.dp)) {
+            Column(modifier = Modifier.fillMaxSize()) {
                 TopAppBar(
                     title = {
                         Text(
@@ -232,9 +235,15 @@ fun FinalReviewScreen(
 
                 if (viewMode == ViewMode.LIST) {
                     LazyColumn(
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(16.dp),
+
+                            modifier = Modifier.weight(1f), // <-- Quita el .padding() de aquí
+                            // --- AÑADE ESTO ---
+                            contentPadding = PaddingValues(
+                                start = 16.dp,
+                                end = 16.dp,
+                                top = 16.dp,
+                                bottom = 80.dp // <-- Padding para la barra (80dp + 16dp extra)
+                            ),
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
                         val count = bitmaps.size
@@ -268,9 +277,14 @@ fun FinalReviewScreen(
                 } else { // GRID View
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(2),
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(16.dp),
+                        modifier = Modifier.weight(1f), // <-- Quita el .padding() de aquí
+                        // --- AÑADE ESTO ---
+                        contentPadding = PaddingValues(
+                            start = 16.dp,
+                            end = 16.dp,
+                            top = 16.dp,
+                            bottom = 96.dp // <-- Padding para la barra (80dp + 16dp extra)
+                        ),
                         verticalArrangement = Arrangement.spacedBy(16.dp),
                         horizontalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
@@ -310,19 +324,25 @@ fun FinalReviewScreen(
 
 
         if (!isMarkupMode) {
-            BottomAppBar(
-                containerColor = Color(0xFF2C2C2E),
-                contentColor = Color.White,
+            // --- ¡CAMBIO GRANDE AQUÍ! ---
+            // Reemplazamos BottomAppBar por un Surface para que la altura sea flexible
+            Surface(
                 modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .height(80.dp)
+                    .align(Alignment.BottomCenter) // Sigue alineado abajo
+                    .fillMaxWidth(), // Ocupa todo el ancho
+                color = Color(0xFF2C2C2E), // El color de tu barra
+                contentColor = Color.White
             ) {
+                // La Row que tenías dentro, pero ahora con un padding vertical
+                // para que no esté pegada a los bordes
                 Row(
-                    modifier = Modifier.fillMaxWidth() ,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp), // <-- Añade padding vertical
                     horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically,
-
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
+
                     if (isSelectionModeActive) {
                         ActionButton(icon = Icons.Default.Delete, text = "Eliminar", enabled = selectedIndices.isNotEmpty(), onClick = {
                             bitmaps = bitmaps.filterIndexed { index, _ -> index !in selectedIndices }
@@ -331,15 +351,13 @@ fun FinalReviewScreen(
                             selectedIndex = if(bitmaps.isNotEmpty()) 0 else null
                         })
                         ActionButton(
-                            icon = Icons.Default.AutoAwesomeMosaic,
+                            icon = Icons.Default.AutoAwesomeMosaic, // (Asegúrate de importar esto)
                             text = "Collage",
                             enabled = selectedIndices.isNotEmpty(),
                             onClick = {
-                                // 1. Filtra los bitmaps seleccionados
+                                // Esta es la lógica que ya teníamos:
                                 bitmapsForCollage = bitmaps.filterIndexed { index, _ -> index in selectedIndices }
-                                // 2. Entra en modo Collage
                                 isCollageMode = true
-                                // 3. Opcional: salir del modo selección
                                 isSelectionModeActive = false
                                 selectedIndices = emptySet()
                             }
@@ -353,6 +371,7 @@ fun FinalReviewScreen(
                     }
                 }
             }
+            // --- FIN DEL CAMBIO ---
         }
 
         if (showShareSheet) {
@@ -734,11 +753,12 @@ private fun ActionButton(
 ) {
     Column(
         modifier = modifier
-            .fillMaxHeight()
+           // .fillMaxHeight()
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+       // verticalArrangement = Arrangement.Center
+
     ) {
         Icon(
             imageVector = icon,
