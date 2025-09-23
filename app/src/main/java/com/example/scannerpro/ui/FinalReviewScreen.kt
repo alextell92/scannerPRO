@@ -1121,16 +1121,22 @@ private fun CollagePage(
                             awaitPointerEventScope {
                                 while (true) {
                                     val down = awaitFirstDown(requireUnconsumed = false)
-                                    // NO consumir el down aquí: necesario para handoff estable
+
+                                    // <-- IMPORTANTE: consume el down para que el padre no inicie scroll
+                                    // Usa consumeDownChange() (más explícito) si está disponible en tu versión.
+                                    down.consumeDownChange()
+
                                     selectedBitmapInCollage = bitmap
 
                                     var isDraggingLocally = false
                                     var handoffToParent = false
 
-                                    val touchSlopChange = awaitTouchSlopOrCancellation(down.id) { _, _ ->
-                                        // marcamos que el usuario movió suficiente para ser drag
+                                    // Detecta si se supera el touch slop (inicio de drag)
+                                    val touchSlopChange = awaitTouchSlopOrCancellation(down.id) { change, _ ->
                                         isDraggingLocally = true
-                                        // no consumimos aquí para permitir handoff si se decide
+                                        // Consume el inicio del movimiento para que el padre NO procese este cambio
+                                        // (usar consumePositionChange() si está disponible)
+                                        change.consumePositionChange()
                                     }
 
                                     if (isDraggingLocally && touchSlopChange != null) {
@@ -1147,12 +1153,11 @@ private fun CollagePage(
                                                 break
                                             }
 
-                                            // Calcula el delta y la nueva posición local
+                                            // Calcula delta y nueva posición local
                                             val dragAmount = dragChange.position - dragChange.previousPosition
                                             val oldOffset = collageItems[bitmap] ?: Offset.Zero
                                             val newOffset = oldOffset + dragAmount
 
-                                            // Umbral para iniciar handoff a otra página
                                             val edgeThreshold = canvasHeightPx * 0.15f
                                             val isNearTop = newOffset.y < edgeThreshold
                                             val isNearBottom = (newOffset.y + imageHeightPx) > (canvasHeightPx - edgeThreshold)
@@ -1160,15 +1165,14 @@ private fun CollagePage(
                                             val shouldHandoff = (isNearTop && !isFirstPage) || (isNearBottom && !isLastPage)
 
                                             if (!handoffToParent && shouldHandoff) {
-                                                // Empezamos handoff: avisamos al padre con la posición absoluta actual
+                                                // Iniciamos handoff: avisamos al padre con la posición absoluta actual
                                                 handoffToParent = true
                                                 val coords = layoutCoords
                                                 if (coords != null) {
                                                     val absolutePosition = coords.localToWindow(dragChange.position)
                                                     onStartDrag(bitmap, absolutePosition, pageIndex)
                                                 }
-                                                // No consumimos este evento (padre lo manejará)
-                                                // y seguimos al siguiente dragChange, pero ahora en modo handoff
+                                                // NOTA: no rompemos aquí; la siguiente iteración seguirá llamando onDragMove
                                             }
 
                                             if (handoffToParent) {
@@ -1180,8 +1184,8 @@ private fun CollagePage(
                                                 }
                                                 // No actualizamos localmente (padre muestra preview)
                                             } else {
-                                                // Drag local: consumimos y actualizamos la posición del bitmap localmente
-                                                dragChange.consume()
+                                                // Drag local: consumimos el movimiento y actualizamos la posición del bitmap localmente
+                                                dragChange.consumePositionChange()
                                                 collageItems[bitmap] = Offset(
                                                     x = newOffset.x.coerceIn(0f, canvasWidthPx - imageWidthPx),
                                                     y = newOffset.y.coerceIn(0f, canvasHeightPx - imageHeightPx)
@@ -1406,6 +1410,14 @@ private fun CollageScreen(
         }
     }
 }
+
+// ---------- AddPageCanvas (placeholder simple) ----------
+
+
+
+// ---------- AddPageCanvas (placeholder simple) ----------
+
+
 
 @Composable
 fun AddPageCanvas(onClick: () -> Unit, modifier: Modifier = Modifier) {
