@@ -107,11 +107,16 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.IntOffset
 import kotlin.math.roundToInt
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.awaitDragOrCancellation
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitTouchSlopOrCancellation
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateMapOf
@@ -120,9 +125,28 @@ import androidx.compose.foundation.verticalScroll
 
 import androidx.compose.foundation.pager.VerticalPager // <-- ¡NUEVO!
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.material.icons.filled.AddCircleOutline
 import androidx.compose.material3.Surface
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.input.pointer.consumeDownChange
+import androidx.compose.ui.input.pointer.consumePositionChange
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalView
 
-// ... (y todas las demás que ya tenías)
+
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.filled.AddCircleOutline
+
+import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.zIndex
+import androidx.xr.compose.testing.toDp
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+
 
 private enum class ViewMode { LIST, GRID }
 
@@ -1019,214 +1043,384 @@ private object AppPreferences {
     }
 }
 
-/**
- * Pantalla principal del editor de Collages.
- * Gestiona la paginación y la barra de herramientas.
- */
-/**
- * Pantalla principal del editor de Collages.
- * Ahora solo muestra un lienzo vertical.
- */
-/**
- * Pantalla principal del editor de Collages.
- * AHORA usa VerticalPager (deslizado vertical).
- */
-/**
- * Lienzo blanco individual que contiene 1 o 2 imágenes
- * que se pueden arrastrar libremente y seleccionar con clic.
- */
+
 @Composable
 private fun CollagePage(
+    pageIndex: Int,
     pageBitmaps: List<Bitmap>,
+    isFirstPage: Boolean,
+    isLastPage: Boolean,
+    draggingBitmap: Bitmap?,            // bitmap que se está arrastrando globalmente (para ocultarlo localmente)
+    isDragging: Boolean,                // flag global de arrastre
     modifier: Modifier = Modifier,
     onBitmapRemoved: (Bitmap) -> Unit,
-    onDragStateChanged: (Boolean) -> Unit // <-- Recibe la lambda
+    onStartDrag: (bitmap: Bitmap, absolutePosition: Offset, sourcePageIndex: Int) -> Unit,
+    onDragMove: (absolutePosition: Offset) -> Unit,
+    onDrop: () -> Unit
 ) {
     var selectedBitmapInCollage by remember { mutableStateOf<Bitmap?>(null) }
+    var layoutCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
 
     BoxWithConstraints(
         modifier = modifier
             .background(Color.White)
             .clip(RoundedCornerShape(8.dp))
-            .clickable { selectedBitmapInCollage = null } // Clic en fondo deselecciona
+            .clickable { selectedBitmapInCollage = null }
+            .onGloballyPositioned { layoutCoords = it }
     ) {
         val canvasWidthPx = constraints.maxWidth.toFloat()
         val canvasHeightPx = constraints.maxHeight.toFloat()
-        val density = LocalDensity.current.density
+        val density = LocalDensity.current
 
+        // Mapa de posiciones locales (por página)
         val collageItems = remember { mutableStateMapOf<Bitmap, Offset>() }
 
-        // Lógica para posicionar las imágenes (centradas en columna)
-        LaunchedEffect(pageBitmaps.size) {
+        // Inicializa posiciones cuando cambian los bitmaps o dimensiones
+        LaunchedEffect(pageBitmaps, canvasWidthPx, canvasHeightPx) {
             collageItems.clear()
-            val imageWidthPx = canvasWidthPx * 0.4f
-
-            // Si no hay bitmaps, no hagas nada
             if (pageBitmaps.isEmpty()) return@LaunchedEffect
 
-            // Calcula el alto de la primera imagen para el 'gap'
-            val firstBitmap = pageBitmaps.first()
-            val imageHeightPx = imageWidthPx / (firstBitmap.width.toFloat() / firstBitmap.height.toFloat())
-            val verticalGap = (canvasHeightPx - (imageHeightPx * pageBitmaps.size)) / (pageBitmaps.size + 1)
+            val imageWidthPx = canvasWidthPx * 0.4f
+            val horizontalMargin = (canvasWidthPx - imageWidthPx) / 2f
+            var currentY = 20f
 
-            pageBitmaps.forEachIndexed { index, bitmap ->
-                val imageAspectRatio = bitmap.width.toFloat() / bitmap.height.toFloat()
-                val currentImageHeightPx = imageWidthPx / imageAspectRatio
+            pageBitmaps.forEach { bitmap ->
+                val imageAspectRatio = if (bitmap.height > 0) bitmap.width.toFloat() / bitmap.height.toFloat() else 1f
+                val imageHeightPx = imageWidthPx / imageAspectRatio
 
-                val initialX = (canvasWidthPx - imageWidthPx) / 2f // Centrado
-
-                // Recalcula el Y basado en la altura de la imagen ANTERIOR
-                val yOffset = if (index == 0) {
-                    verticalGap
-                } else {
-                    val previousBitmap = pageBitmaps[index - 1]
-                    val previousImageHeight = imageWidthPx / (previousBitmap.width.toFloat() / previousBitmap.height.toFloat())
-                    (collageItems[previousBitmap]?.y ?: 0f) + previousImageHeight + verticalGap
-                }
-
-                collageItems[bitmap] = Offset(initialX, yOffset)
+                collageItems[bitmap] = Offset(horizontalMargin, currentY)
+                currentY += imageHeightPx + 20f
             }
         }
 
+        // Dibuja cada imagen (si coincide con draggingBitmap y isDragging la ocultamos)
+        val closeSizePx = with(density) { 24.dp.toPx() }
+
         collageItems.forEach { (bitmap, currentOffset) ->
-
+            // Si esta bitmap es la que se arrastra globalmente, la ocultamos para evitar duplicados
+            val shouldHide = isDragging && draggingBitmap != null && bitmap == draggingBitmap
             val imageWidthPx = canvasWidthPx * 0.4f
-            val imageAspectRatio = bitmap.width.toFloat() / bitmap.height.toFloat()
+            val imageAspectRatio = if (bitmap.height > 0) bitmap.width.toFloat() / bitmap.height.toFloat() else 1f
             val imageHeightPx = imageWidthPx / imageAspectRatio
-            val imageWidthDp = (imageWidthPx / density).dp
+            val imageWidthDp = with(density) { imageWidthPx.toDp() }
 
-            Image(
-                bitmap = bitmap.asImageBitmap(),
-                contentDescription = "Imagen de collage",
-                contentScale = ContentScale.Fit,
-                modifier = Modifier
-                    .width(imageWidthDp)
-                    .aspectRatio(imageAspectRatio)
-                    .offset { IntOffset(currentOffset.x.roundToInt(), currentOffset.y.roundToInt()) }
-                    .border(
-                        width = if (selectedBitmapInCollage == bitmap) 3.dp else 1.dp,
-                        color = if (selectedBitmapInCollage == bitmap) Color.Green else Color.Black
-                    )
-                    // --- ¡LA LÓGICA DE GESTOS COMBINADA! ---
-                    .pointerInput(bitmap) {
-                        // 1. Gesto de 'Tocar' (para seleccionar)
-                        detectTapGestures(
-                            onTap = {
-                                selectedBitmapInCollage = bitmap
-                            }
+            if (!shouldHide) {
+                Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = "Imagen de collage",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .width(imageWidthDp)
+                        .aspectRatio(imageAspectRatio)
+                        .offset { IntOffset(currentOffset.x.roundToInt(), currentOffset.y.roundToInt()) }
+                        .border(
+                            width = if (selectedBitmapInCollage == bitmap) 3.dp else 1.dp,
+                            color = if (selectedBitmapInCollage == bitmap) Color.Green else Color.Black
                         )
+                        .pointerInput(bitmap) {
+                            awaitPointerEventScope {
+                                while (true) {
+                                    val down = awaitFirstDown(requireUnconsumed = false)
+                                    // NO consumir el down aquí: necesario para handoff estable
+                                    selectedBitmapInCollage = bitmap
 
-                        // 2. Gesto de 'Arrastrar' (para mover)
-                        detectDragGestures(
-                            onDragStart = {
-                                selectedBitmapInCollage = bitmap
-                                onDragStateChanged(true) // ¡AVISA AL PAGER!
-                            },
-                            onDragEnd = { onDragStateChanged(false) }, // ¡LIBERA AL PAGER!
-                            onDragCancel = { onDragStateChanged(false) }, // ¡LIBERA AL PAGER!
-                            onDrag = { change, dragAmount ->
-                                change.consume() // Consume el evento
-                                val oldOffset = collageItems[bitmap] ?: Offset.Zero
-                                val newX = (oldOffset.x + dragAmount.x)
-                                val newY = (oldOffset.y + dragAmount.y)
+                                    var isDraggingLocally = false
+                                    var handoffToParent = false
 
-                                collageItems[bitmap] = Offset(
-                                    x = newX.coerceIn(0f, canvasWidthPx - imageWidthPx),
-                                    y = newY.coerceIn(0f, canvasHeightPx - imageHeightPx)
-                                )
-                            }
-                        )
-                    }
-            )
+                                    val touchSlopChange = awaitTouchSlopOrCancellation(down.id) { _, _ ->
+                                        // marcamos que el usuario movió suficiente para ser drag
+                                        isDraggingLocally = true
+                                        // no consumimos aquí para permitir handoff si se decide
+                                    }
 
-            // El botón "X" (no cambia)
-            if (selectedBitmapInCollage == bitmap) {
+                                    if (isDraggingLocally && touchSlopChange != null) {
+                                        val pointerId = touchSlopChange.id
+                                        var prevChangePos = touchSlopChange.position
+
+                                        while (true) {
+                                            val dragChange = awaitDragOrCancellation(pointerId)
+                                            if (dragChange == null) {
+                                                // Fin del gesto
+                                                if (handoffToParent) {
+                                                    onDrop()
+                                                }
+                                                break
+                                            }
+
+                                            // Calcula el delta y la nueva posición local
+                                            val dragAmount = dragChange.position - dragChange.previousPosition
+                                            val oldOffset = collageItems[bitmap] ?: Offset.Zero
+                                            val newOffset = oldOffset + dragAmount
+
+                                            // Umbral para iniciar handoff a otra página
+                                            val edgeThreshold = canvasHeightPx * 0.15f
+                                            val isNearTop = newOffset.y < edgeThreshold
+                                            val isNearBottom = (newOffset.y + imageHeightPx) > (canvasHeightPx - edgeThreshold)
+
+                                            val shouldHandoff = (isNearTop && !isFirstPage) || (isNearBottom && !isLastPage)
+
+                                            if (!handoffToParent && shouldHandoff) {
+                                                // Empezamos handoff: avisamos al padre con la posición absoluta actual
+                                                handoffToParent = true
+                                                val coords = layoutCoords
+                                                if (coords != null) {
+                                                    val absolutePosition = coords.localToWindow(dragChange.position)
+                                                    onStartDrag(bitmap, absolutePosition, pageIndex)
+                                                }
+                                                // No consumimos este evento (padre lo manejará)
+                                                // y seguimos al siguiente dragChange, pero ahora en modo handoff
+                                            }
+
+                                            if (handoffToParent) {
+                                                // Reportamos al padre la posición absoluta del dedo
+                                                val coords = layoutCoords
+                                                if (coords != null) {
+                                                    val absolutePosition = coords.localToWindow(dragChange.position)
+                                                    onDragMove(absolutePosition)
+                                                }
+                                                // No actualizamos localmente (padre muestra preview)
+                                            } else {
+                                                // Drag local: consumimos y actualizamos la posición del bitmap localmente
+                                                dragChange.consume()
+                                                collageItems[bitmap] = Offset(
+                                                    x = newOffset.x.coerceIn(0f, canvasWidthPx - imageWidthPx),
+                                                    y = newOffset.y.coerceIn(0f, canvasHeightPx - imageHeightPx)
+                                                )
+                                            }
+
+                                            prevChangePos = dragChange.position
+                                        } // end drag loop
+                                    } // end if isDraggingLocally
+                                } // end outer while
+                            } // end awaitPointerEventScope
+                        } // end pointerInput
+                ) // end Image
+            } // end if !hide
+
+            // Botón "X"
+            if (selectedBitmapInCollage == bitmap && !shouldHide) {
                 IconButton(
                     onClick = {
                         onBitmapRemoved(bitmap)
-                        collageItems.remove(bitmap)
-                        selectedBitmapInCollage = null
                     },
                     modifier = Modifier
-                        .offset { IntOffset((currentOffset.x + imageWidthPx - 24.dp.toPx()).roundToInt(), currentOffset.y.roundToInt()) }
+                        .offset {
+                            IntOffset(
+                                (currentOffset.x + imageWidthPx - (closeSizePx / 2f)).roundToInt(),
+                                (currentOffset.y - (closeSizePx / 2f)).roundToInt()
+                            )
+                        }
                         .size(24.dp)
                         .background(Color.Red, CircleShape)
-                        .align(Alignment.TopStart)
                 ) {
-                    Icon(Icons.Default.Close, "Eliminar imagen", tint = Color.White)
+                    Icon(Icons.Default.Close, contentDescription = "Eliminar imagen", tint = Color.White)
                 }
             }
-        }
-    }
-}
+        } // end forEach
+    } // end BoxWithConstraints
+} // end CollagePage
 
-/**
- * Lienzo blanco individual que contiene 1 o 2 imágenes
- * que se pueden arrastrar libremente.
- */
 
-/**
- * Pantalla principal del editor de Collages.
- * AHORA usa VerticalPager (deslizado vertical).
- */
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+// ---------- CollageScreen (completa, lista para pegar) ----------
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CollageScreen(
     bitmaps: List<Bitmap>,
     onClose: () -> Unit,
     onSave: () -> Unit
 ) {
-    var collageBitmaps by remember { mutableStateOf(bitmaps.toMutableList()) }
-    // Estado para saber si el usuario está arrastrando una imagen
-    var isDraggingImage by remember { mutableStateOf(false) }
+    // pages: lista de páginas, cada página es MutableList<Bitmap>
+    var pages by remember {
+        mutableStateOf(bitmaps.chunked(2).map { it.toMutableList() }.toMutableList())
+    }
 
-    // Agrupa los bitmaps de 2 en 2
-    val pages = collageBitmaps.chunked(2)
-    val pagerState = rememberPagerState(pageCount = { pages.size })
+    var isDraggingImage by remember { mutableStateOf(false) }
+    var dragPreviewBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var dragPreviewPosition by remember { mutableStateOf(Offset.Zero) }
+    var sourcePageIndexForDrag by remember { mutableStateOf<Int?>(null) }
+
+    val lazyListState = rememberLazyListState()
+    var listLayoutCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
+
+    // Auto-scroll mientras arrastras: suavizado con animateScrollBy pequeños pasos
+    LaunchedEffect(isDraggingImage) {
+        if (!isDraggingImage) return@LaunchedEffect
+        while (isActive && isDraggingImage) {
+            val coords = listLayoutCoords ?: break
+            val listTop = coords.localToWindow(Offset.Zero).y
+            val listBottom = listTop + coords.size.height
+            val threshold = coords.size.height * 0.14f
+            val scrollAmount = 40f // px por animación (ajusta para suavidad)
+
+            if (dragPreviewPosition.y < listTop + threshold) {
+                scope.launch { lazyListState.animateScrollBy(-scrollAmount) }
+            } else if (dragPreviewPosition.y > listBottom - threshold) {
+                scope.launch { lazyListState.animateScrollBy(scrollAmount) }
+            }
+            delay(80) // control de frecuencia de auto-scroll
+        }
+    }
 
     Column(Modifier.fillMaxSize().background(Color.DarkGray)) {
         TopAppBar(
-            title = { Text("Editor de Collage (${pagerState.currentPage + 1} / ${pages.size})", color = Color.White) },
-            navigationIcon = {
-                IconButton(onClick = onClose) {
-                    Icon(Icons.Default.Close, "Cerrar", tint = Color.White)
-                }
+            title = {
+                val pageCount = pages.size.coerceAtLeast(1)
+                val visibleIndex = lazyListState.firstVisibleItemIndex.coerceAtLeast(0)
+                val currentPage = (visibleIndex + 1).coerceIn(1, pageCount)
+                Text("Editor de Collage ($currentPage / $pageCount)", color = Color.White)
             },
+            navigationIcon = { IconButton(onClick = onClose) { Icon(Icons.Default.Close, "Cerrar", tint = Color.White) } },
             actions = {
-                IconButton(onClick = onSave, enabled = collageBitmaps.isNotEmpty()) {
-                    Icon(Icons.Default.Check, "Guardar", tint = Color.White)
-                }
+                IconButton(onClick = onSave, enabled = pages.any { it.isNotEmpty() }) { Icon(Icons.Default.Check, "Guardar", tint = Color.White) }
             },
             colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF2C2C2E))
         )
 
-        // --- ¡CAMBIO GRANDE AQUÍ! ---
-        // Usamos VerticalPager en lugar de HorizontalPager
-        VerticalPager(
-            state = pagerState,
-            // ¡LA CLAVE! Desactiva el Pager si estamos arrastrando una imagen
-            userScrollEnabled = !isDraggingImage,
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp)
-        ) { pageIndex ->
-            // Le pasamos la lista de (máximo 2) bitmaps para esta página
-            CollagePage(
-                pageBitmaps = pages[pageIndex],
+        Box(Modifier.fillMaxSize()) {
+            LazyColumn(
+                state = lazyListState,
                 modifier = Modifier
                     .fillMaxSize()
-                    // Mantenemos la proporción A4 para el lienzo
-                    .aspectRatio(1f / 1.41f)
-                    .clip(RoundedCornerShape(8.dp)),
-                onBitmapRemoved = { removedBitmap ->
-                    collageBitmaps = collageBitmaps.toMutableList().apply { remove(removedBitmap) }
-                },
-                // Pasamos la lambda para que el hijo notifique al padre
-                onDragStateChanged = { isDragging ->
-                    isDraggingImage = isDragging
+                    .onGloballyPositioned { listLayoutCoords = it },
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                items(count = pages.size, key = { idx -> idx }) { pageIndex ->
+                    val pageList = pages.getOrNull(pageIndex) ?: mutableListOf()
+                    CollagePage(
+                        pageIndex = pageIndex,
+                        pageBitmaps = pageList,
+                        isFirstPage = pageIndex == 0,
+                        isLastPage = pageIndex == pages.lastIndex,
+                        draggingBitmap = dragPreviewBitmap,
+                        isDragging = isDraggingImage,
+                        modifier = Modifier
+                            .fillParentMaxWidth()
+                            .aspectRatio(1f / 1.41f)
+                            .clip(RoundedCornerShape(8.dp)),
+                        onBitmapRemoved = { removedBitmap ->
+                            // eliminar localmente
+                            val newPages = pages.toMutableList()
+                            newPages.forEach { it.remove(removedBitmap) }
+                            pages = newPages
+                        },
+                        onStartDrag = { bitmap, absolutePosition, sourcePage ->
+                            // PREPARA preview sin eliminar todavía
+                            isDraggingImage = true
+                            dragPreviewBitmap = bitmap
+                            dragPreviewPosition = absolutePosition
+                            sourcePageIndexForDrag = sourcePage
+                            // NO removemos aquí, lo hacemos en onDrop para mantener indices estables
+                        },
+                        onDragMove = { absolutePosition ->
+                            dragPreviewPosition = absolutePosition
+                        },
+                        onDrop = {
+                            val bmp = dragPreviewBitmap ?: return@CollagePage
+                            val coords = listLayoutCoords ?: return@CollagePage
+
+                            // elegir targetPage por la posición Y absoluta (ventana)
+                            val visibleItems = lazyListState.layoutInfo.visibleItemsInfo
+                            var targetPage = -1
+                            if (visibleItems.isNotEmpty()) {
+                                val targetItem = visibleItems.firstOrNull { item ->
+                                    val itemTop = coords.localToWindow(Offset(0f, item.offset.toFloat())).y
+                                    val itemBottom = itemTop + item.size
+                                    dragPreviewPosition.y in itemTop..itemBottom
+                                }
+                                targetPage = targetItem?.index ?: visibleItems.last().index
+                            } else {
+                                targetPage = pages.lastIndex.coerceAtLeast(0)
+                            }
+
+                            // Insertar en target y eliminar del source (si existe)
+                            val newPages = pages.toMutableList()
+
+                            // Remover primera aparición en cualquier página (por seguridad)
+                            var removedFromSource = false
+                            for (p in newPages) {
+                                if (p.remove(bmp)) {
+                                    removedFromSource = true
+                                    break
+                                }
+                            }
+
+                            // Asegurar targetPage válido
+                            val safeTarget = targetPage.coerceIn(0, newPages.lastIndex.coerceAtLeast(0))
+
+                            // Insertar al final de la página target
+                            if (newPages.isEmpty()) {
+                                newPages.add(mutableListOf(bmp))
+                            } else {
+                                val targetList = newPages.getOrNull(safeTarget) ?: run {
+                                    // expandir si se requiere
+                                    while (newPages.size <= safeTarget) newPages.add(mutableListOf())
+                                    newPages[safeTarget]
+                                }
+                                targetList.add(bmp)
+                            }
+
+                            pages = newPages
+
+                            // Reset estado de drag
+                            isDraggingImage = false
+                            dragPreviewBitmap = null
+                            sourcePageIndexForDrag = null
+                        }
+                    )
                 }
-            )
+
+                // Botón para añadir página
+                item {
+                    AddPageCanvas(
+                        onClick = {
+                            val newPages = pages.toMutableList()
+                            newPages.add(mutableListOf())
+                            pages = newPages
+                        },
+                        modifier = Modifier
+                            .fillParentMaxWidth()
+                            .height(150.dp)
+                    )
+                }
+            }
+
+            // Drag preview flotante
+            dragPreviewBitmap?.let { bmp ->
+                val previewSize = 120.dp
+                val offsetX = with(density) { (dragPreviewPosition.x - (previewSize.toPx() / 2f)).toDp() }
+                val offsetY = with(density) { (dragPreviewPosition.y - (previewSize.toPx() / 2f)).toDp() }
+
+                Image(
+                    bitmap = bmp.asImageBitmap(),
+                    contentDescription = null,
+                    modifier = Modifier
+                        .size(previewSize)
+                        .offset(x = offsetX, y = offsetY)
+                        .shadow(8.dp, RoundedCornerShape(8.dp))
+                        .zIndex(10f)
+                )
+            }
         }
-        // --- FIN DEL CAMBIO ---
+    }
+}
+
+@Composable
+fun AddPageCanvas(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color.DarkGray.copy(alpha = 0.5f))
+            .border(2.dp, Color.Gray, RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(Icons.Default.AddCircleOutline, contentDescription = "Añadir Página", tint = Color.White, modifier = Modifier.size(40.dp))
+            Spacer(Modifier.height(8.dp))
+            Text("Añadir Página", color = Color.White)
+        }
     }
 }

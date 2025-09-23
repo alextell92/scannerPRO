@@ -89,6 +89,7 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
     implementation(libs.ads.mobile.sdk)
     implementation(libs.androidx.foundation)
+    implementation(libs.androidx.compose.testing)
     kapt(libs.androidx.room.compiler)
 
 
