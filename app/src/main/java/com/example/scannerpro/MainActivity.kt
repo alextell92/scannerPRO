@@ -3,6 +3,9 @@
 package com.example.scannerpro
 
 import DocumentScannerScreen
+import DocumentWithPages
+import Document
+import Page
 import android.content.Context
 import android.os.Bundle
 import android.util.Log
@@ -10,6 +13,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.annotation.DrawableRes
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -23,7 +27,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape // <-- NUEVO IMPORT
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
@@ -38,6 +45,9 @@ import androidx.compose.material.icons.filled.ViewModule
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.Divider
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -48,6 +58,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TopAppBar
@@ -60,8 +71,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip // <-- NUEVO IMPORT
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale // <-- NUEVO IMPORT
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
@@ -74,11 +87,13 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import coil.compose.AsyncImage // <-- NUEVO IMPORT (LIBRERÍA COIL)
 import com.example.scannerpro.ui.HomeScreen
 import com.example.scannerpro.ui.HomeUiState
 import com.example.scannerpro.ui.HomeViewModel
 import com.example.scannerpro.ui.theme.ScannerPROTheme
 import org.opencv.android.OpenCVLoader
+import java.io.File // <-- NUEVO IMPORT
 
 // --- Clases de Navegación y Modelo ---
 
@@ -131,9 +146,8 @@ fun AppEntry() {
     val isSelectionModeActive = selectedDocumentIds.isNotEmpty()
     var showMoreMenuSheet by remember { mutableStateOf(false) }
     var showRenameDialog by remember { mutableStateOf(false) }
-
-    var showDeleteDialog by remember { mutableStateOf(false) } // <-- 1. AÑADE ESTE ESTADO
-
+    var showDeleteDialog by remember { mutableStateOf(false) }
+    var showMergeSheet by remember { mutableStateOf(false) }
 
     // Estado de ViewMode (Lista/Grid) ahora vive aquí
     val context = LocalContext.current
@@ -182,23 +196,10 @@ fun AppEntry() {
                         selectedCount = selectedDocumentIds.size,
                         onShareClick = { /* TODO */ },
                         onCombineClick = {
-                            if (selectedDocumentIds.size > 1) {
-                                // Ordenamos para tener un "destino" predecible (ej. el doc más antiguo)
-                                val sortedIds = selectedDocumentIds.sorted()
-                                val targetDocumentId = sortedIds.first()
-                                val sourceDocumentIds = sortedIds.drop(1).toSet()
-
-                                homeViewModel.mergeDocuments(targetDocumentId, sourceDocumentIds)
-                                selectedDocumentIds = emptySet() // Limpiar selección
-                            }
+                            showMergeSheet = true
                         },
                         onRenameClick = { showRenameDialog = true },
-                        onDeleteClick = {
-                            if (selectedDocumentIds.isNotEmpty()) {
-                                // 1. Llama al ViewModel para borrar
-                                showDeleteDialog = true // <-- Solo muestra el diálogo
-                            }
-                        },
+                        onDeleteClick = { showDeleteDialog = true },
                         onMoreClick = { showMoreMenuSheet = true }
                     )
                 } else {
@@ -280,7 +281,6 @@ fun AppEntry() {
 
     // --- 6. DIÁLOGO DE RENOMBRAR ---
     if (showRenameDialog) {
-        // El botón de renombrar solo es visible cuando hay 1 ítem seleccionado
         val documentIdToRename = selectedDocumentIds.firstOrNull()
         val documentToRename = uiState.documents.find { it.document.id == documentIdToRename }
 
@@ -289,17 +289,17 @@ fun AppEntry() {
                 currentName = documentToRename.document.name,
                 onDismiss = { showRenameDialog = false },
                 onConfirm = { newName ->
-                    // Asumimos que homeViewModel tiene esta función
                     homeViewModel.renameDocument(documentIdToRename, newName)
                     showRenameDialog = false
-                    selectedDocumentIds = emptySet() // Limpiar selección
+                    selectedDocumentIds = emptySet()
                 }
             )
         } else {
-            // Si algo sale mal (ej. el documento desaparece), solo cerramos el diálogo
             showRenameDialog = false
         }
     }
+
+    // --- 7. DIÁLOGO DE ELIMINAR ---
     if (showDeleteDialog) {
         DeleteConfirmationDialog(
             documentCount = selectedDocumentIds.size,
@@ -313,10 +313,35 @@ fun AppEntry() {
             }
         )
     }
+
+    // --- 8. PANEL DE COMBINAR ---
+    if (showMergeSheet) {
+        MergeDocumentsSheet(
+            uiState = uiState,
+            initialSelectedIds = selectedDocumentIds,
+            onDismiss = { showMergeSheet = false },
+            onConfirmMerge = { finalSelectedIds, deleteOriginals ->
+                showMergeSheet = false
+                if (finalSelectedIds.size > 1) {
+                    if (deleteOriginals) {
+                        // Opción A: "Fusionar y Eliminar"
+                        val sortedIds = finalSelectedIds.sorted()
+                        val targetId = sortedIds.first()
+                        val sourceIds = sortedIds.drop(1).toSet()
+                        homeViewModel.mergeDocuments(targetId, sourceIds)
+                    } else {
+                        // Opción B: "Crear Nuevo y Mantener"
+                        homeViewModel.createNewDocumentFromMerge(finalSelectedIds)
+                    }
+                }
+                selectedDocumentIds = emptySet()
+            }
+        )
+    }
 }
 
 
-/** BottomBar (footer) principal - ESTA ES TU FUNCIÓN ORIGINAL COMPLETA */
+/** BottomBar (footer) principal */
 @Composable
 fun BottomBar(navController: androidx.navigation.NavHostController) {
     val items = listOf(
@@ -391,7 +416,7 @@ fun BottomBar(navController: androidx.navigation.NavHostController) {
 }
 
 
-// --- 6. COMPOSABLES PARA BARRAS Y MENÚS DE SELECCIÓN ---
+// --- COMPOSABLES PARA BARRAS Y MENÚS DE SELECCIÓN ---
 
 @Composable
 private fun NormalTopBar(
@@ -415,7 +440,7 @@ private fun NormalTopBar(
 private fun SelectionTopBar(
     selectedCount: Int,
     onClearSelection: () -> Unit,
-    onSelectAll: () -> Unit // <-- AQUÍ ESTABA EL ERROR (DECÍA '()...')
+    onSelectAll: () -> Unit
 ) {
     TopAppBar(
         title = { Text("$selectedCount seleccionado(s)") },
@@ -454,8 +479,6 @@ private fun SelectionBottomBar(
             }
 
             BottomActionItem(modifier = Modifier.weight(1f), icon = Icons.Default.Delete, text = "Eliminar", onClick = onDeleteClick)
-
-            // --- CORRECCIÓN DEL TYPO ---
             BottomActionItem(modifier = Modifier.weight(1f), icon = Icons.Default.MoreVert, text = "Más", onClick = onMoreClick)
         }
     )
@@ -500,7 +523,7 @@ private fun SheetActionItem(
     }
 }
 
-// --- 7. COMPOSABLE DE DIÁLOGO ---
+// --- DIÁLOGO DE RENOMBRAR ---
 
 @Composable
 fun RenameDocumentDialog(
@@ -541,6 +564,7 @@ fun RenameDocumentDialog(
     )
 }
 
+// --- DIÁLOGO DE ELIMINAR ---
 
 @Composable
 fun DeleteConfirmationDialog(
@@ -559,11 +583,7 @@ fun DeleteConfirmationDialog(
         title = { Text(title) },
         text = { Text(text) },
         confirmButton = {
-            Button(
-                onClick = onConfirm
-                // Opcional: Dale un color rojo
-                // colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-            ) {
+            Button(onClick = onConfirm) {
                 Text("Eliminar")
             }
         },
@@ -573,4 +593,162 @@ fun DeleteConfirmationDialog(
             }
         }
     )
+}
+
+// --- PANEL DE COMBINAR (MODIFICADO) ---
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun MergeDocumentsSheet(
+    uiState: HomeUiState,
+    initialSelectedIds: Set<Long>,
+    onDismiss: () -> Unit,
+    onConfirmMerge: (selectedIds: Set<Long>, deleteOriginals: Boolean) -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    var checkedIds by remember { mutableStateOf(initialSelectedIds) }
+    var deleteOriginals by remember { mutableStateOf(true) }
+
+    val documentsToList = remember(uiState.documents, initialSelectedIds) {
+        uiState.documents.filter { it.document.id in initialSelectedIds }
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 32.dp)
+        ) {
+            Text(
+                "Combinar Documentos",
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.padding(bottom = 16.dp)
+            )
+
+            Text(
+                "Selecciona los documentos que quieres incluir en la combinación final.",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+
+            // --- INICIO DE LA MODIFICACIÓN ---
+            Surface(
+                modifier = Modifier.fillMaxWidth().height(250.dp), // Un poco más de altura
+                shape = MaterialTheme.shapes.medium,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
+            ) {
+                LazyColumn { // LazyColumn ya proporciona el scroll
+                    items(
+                        items = documentsToList,
+                        key = { doc: DocumentWithPages -> doc.document.id }
+                    ) { docWithPages: DocumentWithPages ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    checkedIds = if (docWithPages.document.id in checkedIds) {
+                                        checkedIds - docWithPages.document.id
+                                    } else {
+                                        checkedIds + docWithPages.document.id
+                                    }
+                                }
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(
+                                checked = docWithPages.document.id in checkedIds,
+                                onCheckedChange = { isChecked ->
+                                    checkedIds = if (isChecked) {
+                                        checkedIds + docWithPages.document.id
+                                    } else {
+                                        checkedIds - docWithPages.document.id
+                                    }
+                                }
+                            )
+                            Spacer(Modifier.width(16.dp))
+
+                            // Miniatura
+                            val firstPagePath = docWithPages.pages.firstOrNull()?.filePath
+                            AsyncImage(
+                                model = if (firstPagePath != null) File(firstPagePath) else null, // Carga desde el archivo
+                                contentDescription = "Miniatura de ${docWithPages.document.name}",
+                                modifier = Modifier
+                                    .size(width = 50.dp, height = 70.dp)
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                                contentScale = ContentScale.Crop,
+                                // Opcional: un placeholder si la imagen no carga o es nula
+                                error = painterResource(id = R.drawable.ic_launcher_foreground), // ¡Necesitarás un drawable para esto!
+                                fallback = painterResource(id = R.drawable.ic_launcher_foreground) // O usa un color
+                            )
+
+                            Spacer(Modifier.width(16.dp))
+
+                            // Columna para Nombre y conteo de páginas
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = docWithPages.document.name,
+                                    style = MaterialTheme.typography.bodyLarge
+                                )
+                                Text(
+                                    text = "${docWithPages.pages.size} página(s)",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            // --- FIN DE LA MODIFICACIÓN ---
+
+            Spacer(Modifier.height(24.dp))
+
+            // Opción de borrar originales
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { deleteOriginals = !deleteOriginals }
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Checkbox(
+                    checked = deleteOriginals,
+                    onCheckedChange = { deleteOriginals = it }
+                )
+                Spacer(Modifier.width(16.dp))
+                Column {
+                    Text(
+                        "Eliminar documentos originales",
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    Text(
+                        if (deleteOriginals) "Se fusionarán en un solo documento." else "Se creará un nuevo documento con copias.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(24.dp))
+
+            // Botón de confirmación
+            Button(
+                onClick = {
+                    if (checkedIds.size > 1) {
+                        onConfirmMerge(checkedIds, deleteOriginals)
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                enabled = checkedIds.size > 1
+            ) {
+                Text(if (checkedIds.size > 1) "Combinar ${checkedIds.size} Documentos" else "Selecciona al menos 2")
+            }
+        }
+    }
 }

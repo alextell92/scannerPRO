@@ -89,4 +89,14 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.value = _uiState.value.copy(documents = updatedDocs)
         }
     }
+
+    fun createNewDocumentFromMerge(sourceDocumentIds: Set<Long>) {
+        viewModelScope.launch {
+            // Llama a la nueva función del repositorio (paso 3)
+            repository.createNewDocumentFromCopies(sourceDocumentIds)
+
+            // Recarga la lista para mostrar el nuevo documento
+            loadDocuments()
+        }
+    }
 }

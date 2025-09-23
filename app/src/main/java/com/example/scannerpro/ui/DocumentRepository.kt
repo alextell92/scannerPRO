@@ -20,6 +20,10 @@ import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import Document
+import DocumentWithPages
+import Page // <-- AÑADE ESTA IMPORTACIÓN
+
 
 // --- ENTIDADES DE LA BASE DE DATOS ---
 
@@ -229,6 +233,61 @@ class DocumentRepository(private val context: Context, private val documentDao: 
         // En lugar de solo borrar los documentos (que falla),
         // llamamos a una nueva transacción que borra páginas Y documentos.
         documentDao.deleteDocumentsAndPages(documentIds)
+    }
+
+    suspend fun createNewDocumentFromCopies(sourceDocumentIds: Set<Long>) {
+
+        // 1. Obtener todos los documentos y páginas a copiar
+        val sourceDocuments = documentDao.getDocumentsWithPagesByIds(sourceDocumentIds)
+
+        // 2. Crear un nuevo Documento "padre" en la base de datos
+        val timestamp = SimpleDateFormat("dd-MM-yyyy HH:mm", Locale.getDefault()).format(Date())
+        val newDocument = Document(
+            name = "Documento Combinado ($timestamp)",
+            createdAt = System.currentTimeMillis()
+            // Ajusta esto a los campos de tu entidad Document
+        )
+        // Asumo que tienes una función 'insertDocument' que devuelve el ID
+        val newDocumentId = documentDao.insertDocument(newDocument)
+
+        // 3. Iterar, copiar archivos y crear nuevas entidades Page
+        var pageIndexCounter = 0
+        sourceDocuments.forEach { docWithPages ->
+            docWithPages.pages.sortedBy { page: Page -> page.pageNumber }.forEach { page -> // Ordenar por índice
+
+                val oldFile = File(page.filePath)
+                if (!oldFile.exists()) {
+                    Log.w("Repo", "Archivo fuente no encontrado: ${page.filePath}")
+                    return@forEach // Saltar esta página si no existe el archivo
+                }
+
+                // Crear un nuevo nombre y ruta de archivo
+                // (Asumo que tienes una lógica para crear rutas, la imitaré)
+                val newFileName = "MERGED_${newDocumentId}_${pageIndexCounter}_${System.currentTimeMillis()}.png"
+                val newFile = File(context.filesDir, "pages/$newFileName") // Ajusta esta ruta
+                newFile.parentFile?.mkdirs()
+
+                try {
+                    // 4. Copiar el archivo físico
+                    oldFile.copyTo(newFile)
+
+                    // 5. Crear la nueva entidad Page en la base de datos
+                    val newPage = Page(
+                        documentId = newDocumentId,
+                        filePath = newFile.absolutePath,
+                        pageNumber = pageIndexCounter
+                        // Ajusta esto a los campos de tu entidad Page
+                    )
+                    // Asumo que tienes una función 'insertPage'
+                    documentDao.insertPage(newPage)
+
+                    pageIndexCounter++
+
+                } catch (e: Exception) {
+                    Log.e("Repo", "Error al copiar archivo: ${e.message}")
+                }
+            }
+        }
     }
 
 }
