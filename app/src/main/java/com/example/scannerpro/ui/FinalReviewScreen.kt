@@ -1410,15 +1410,6 @@ private fun CollageScreen(
         }
     }
 }
-
-// ---------- AddPageCanvas (placeholder simple) ----------
-
-
-
-// ---------- AddPageCanvas (placeholder simple) ----------
-
-
-
 @Composable
 fun AddPageCanvas(onClick: () -> Unit, modifier: Modifier = Modifier) {
     Box(
