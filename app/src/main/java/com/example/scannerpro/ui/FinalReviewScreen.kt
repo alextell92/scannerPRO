@@ -88,6 +88,7 @@ import androidx.compose.ui.graphics.Canvas
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -118,6 +119,9 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlin.math.abs
 import kotlin.math.roundToInt
+
+import kotlin.math.max
+import kotlin.math.min
 
 
 private enum class ViewMode { LIST, GRID }
@@ -1040,13 +1044,11 @@ private object AppPreferences {
 }
 
 
-
-
 data class CollageItemData(
     val id: Long = System.nanoTime(),
     val bitmap: Bitmap,
     val offset: Offset = Offset.Zero,
-    val size: Size = Size.Zero  // NEW: Almacena width/height px para snaps (set en inicial)
+    val size: Size = Size.Zero  // Para snaps
 )
 
 data class CollagePageData(
@@ -1063,13 +1065,17 @@ fun CollagePage(
     isLastPage: Boolean,
     draggingItemId: Long?,
     isDragging: Boolean,
+    dragPreviewWidthPx: Float,
+    dragPreviewHeightPx: Float,
     modifier: Modifier = Modifier,
     onItemRemoved: (itemId: Long) -> Unit,
     onStartDrag: (itemId: Long, bmp: Bitmap, absolutePointerPos: Offset, sourcePageIndex: Int, imageWidthPx: Float, imageHeightPx: Float, touchOffset: Offset, wasSelected: Boolean) -> Unit,
     onDragMove: (absolutePointerPos: Offset) -> Unit,
     onDrop: () -> Unit,
     onPositioned: (pageIndex: Int, coords: LayoutCoordinates) -> Unit,
-    onInitialLayoutComputed: (pageIndex: Int, updatedItems: List<CollageItemData>) -> Unit
+    onInitialLayoutComputed: (pageIndex: Int, updatedItems: List<CollageItemData>) -> Unit,
+    currentTargetPageIndex: Int?,
+    dragPreviewOffsetInTarget: Offset?
 ) {
     var selectedItemId by remember { mutableStateOf<Long?>(null) }
     var layoutCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
@@ -1096,6 +1102,7 @@ fun CollagePage(
                 val spacingPx = with(density) { 16.dp.toPx() }
 
                 val newOffsets = mutableMapOf<Long, Offset>()
+                val newSizes = mutableMapOf<Long, Size>()
 
                 val itemHeights = itemsToCenter.map { item ->
                     val aspect = if (item.bitmap.height > 0) item.bitmap.width.toFloat() / item.bitmap.height.toFloat() else 1f
@@ -1115,11 +1122,15 @@ fun CollagePage(
                         x = (canvasWidthPx - imageMaxWidthPx) / 2f,
                         y = currentY
                     )
+                    newSizes[item.id] = Size(imageMaxWidthPx, imageHeightPx)
                     currentY += imageHeightPx + spacingPx
                 }
 
                 val updatedItems = pageData.items.map { item ->
-                    item.copy(offset = newOffsets[item.id] ?: item.offset)
+                    item.copy(
+                        offset = newOffsets[item.id] ?: item.offset,
+                        size = newSizes[item.id] ?: item.size
+                    )
                 }
                 onInitialLayoutComputed(pageIndex, updatedItems)
             }
@@ -1130,9 +1141,9 @@ fun CollagePage(
         pageData.items.forEach { item ->
             val currentOffset = item.offset
             val isBeingDragged = isDragging && draggingItemId == item.id
-            val imageMaxWidthPx = canvasWidthPx * 0.3f
+            val imageMaxWidthPx = item.size.width.takeIf { it > 0 } ?: (canvasWidthPx * 0.3f)
             val aspect = if (item.bitmap.height > 0) item.bitmap.width.toFloat() / item.bitmap.height.toFloat() else 1f
-            val imageHeightPx = imageMaxWidthPx / aspect
+            val imageHeightPx = item.size.height.takeIf { it > 0 } ?: (imageMaxWidthPx / aspect)
             val imageWidthDp = with(density) { imageMaxWidthPx.toDp() }
 
             if (!isBeingDragged) {
@@ -1159,16 +1170,15 @@ fun CollagePage(
                         awaitPointerEventScope {
                             while (true) {
                                 val down = awaitFirstDown(requireUnconsumed = false)
-                                val touchOffsetInsideImage = down.position // Punto de agarre fijo desde down
+                                val touchOffsetInsideImage = down.position
                                 val wasSelected = selectedItemId == item.id
-                                selectedItemId = item.id // Set selección inmediatamente
+                                selectedItemId = item.id
                                 down.consume()
 
                                 var pointerId = down.id
                                 var hasStartedDrag = false
 
                                 if (wasSelected) {
-                                    // Para seleccionada: Lift inmediato (inicia drag en down, zero jump)
                                     layoutCoords?.let { coords ->
                                         val pointerPositionInPage = currentOffset + down.position
                                         val absolutePointer = coords.localToWindow(pointerPositionInPage)
@@ -1180,11 +1190,9 @@ fun CollagePage(
                                     }
                                 }
 
-                                // Ahora espera movimiento o cancel
                                 while (true) {
                                     val dragChange = awaitDragOrCancellation(pointerId)
                                     if (dragChange == null) {
-                                        // No movió: Si started, drop silencioso (vuelve a original)
                                         if (hasStartedDrag) {
                                             onDrop()
                                         }
@@ -1196,8 +1204,6 @@ fun CollagePage(
                                         val absolute = coords.localToWindow(pointerPositionInPage)
 
                                         if (!hasStartedDrag) {
-                                            // Para no seleccionada: Inicia solo si superó slop implícito en awaitDrag
-                                            // (awaitDragOrCancellation tiene slop built-in)
                                             onStartDrag(
                                                 item.id, item.bitmap, absolute, pageIndex,
                                                 imageMaxWidthPx, imageHeightPx, touchOffsetInsideImage, wasSelected
@@ -1208,7 +1214,7 @@ fun CollagePage(
                                         onDragMove(absolute)
                                     }
                                     dragChange.consume()
-                                    pointerId = dragChange.id // Actualiza pointer si cambia
+                                    pointerId = dragChange.id
                                 }
                             }
                         }
@@ -1229,6 +1235,98 @@ fun CollagePage(
                         .background(Color.Red, CircleShape)
                 ) {
                     Icon(Icons.Default.Close, contentDescription = "Eliminar", tint = Color.White)
+                }
+            }
+        }
+
+        // NEW: Snap guides
+        val snapThresholdPx = 5f
+        // CORREGIDO: Se inicializa el estado con una lista vacía.
+        var horizontalSnapLines by remember { mutableStateOf(emptyList<Pair<Float, Float>>()) }  // (y, startX, endX)
+        var verticalSnapLines by remember { mutableStateOf(emptyList<Pair<Float, Float>>()) }    // (x, startY, endY)
+
+        LaunchedEffect(isDragging, dragPreviewOffsetInTarget, pageData.items, dragPreviewWidthPx, dragPreviewHeightPx) {
+            if (currentTargetPageIndex != pageIndex || dragPreviewOffsetInTarget == null || !isDragging) {
+                horizontalSnapLines = emptyList()
+                verticalSnapLines = emptyList()
+                return@LaunchedEffect
+            }
+
+            val otherItems = pageData.items.filter { it.id != draggingItemId && it.size != Size.Zero }
+            val previewX = dragPreviewOffsetInTarget.x
+            val previewY = dragPreviewOffsetInTarget.y
+            val previewW = dragPreviewWidthPx
+            val previewH = dragPreviewHeightPx
+
+            val hSnaps = mutableListOf<Pair<Float, Float>>()
+            val vSnaps = mutableListOf<Pair<Float, Float>>()
+
+            otherItems.forEach { other ->
+                val oX = other.offset.x
+                val oY = other.offset.y
+                val oW = other.size.width
+                val oH = other.size.height
+
+                // Vertical alignments (vertical lines)
+                listOf(oX, oX + oW / 2f, oX + oW).forEach { snapX ->
+                    listOf(previewX, previewX + previewW / 2f, previewX + previewW).forEach { previewSnapX ->
+                        if (abs(previewSnapX - snapX) <= snapThresholdPx) {
+                            val minY = min(previewY, oY)
+                            val maxY = max(previewY + previewH, oY + oH)
+                            vSnaps.add(snapX to (maxY - minY))
+                        }
+                    }
+                }
+
+                // Horizontal alignments (horizontal lines)
+                listOf(oY, oY + oH / 2f, oY + oH).forEach { snapY ->
+                    listOf(previewY, previewY + previewH / 2f, previewY + previewH).forEach { previewSnapY ->
+                        if (abs(previewSnapY - snapY) <= snapThresholdPx) {
+                            val minX = min(previewX, oX)
+                            val maxX = max(previewX + previewW, oX + oW)
+                            hSnaps.add(snapY to (maxX - minX))
+                        }
+                    }
+                }
+            }
+
+            horizontalSnapLines = hSnaps.distinct()
+            verticalSnapLines = vSnaps.distinct()
+        }
+
+        if (horizontalSnapLines.isNotEmpty() || verticalSnapLines.isNotEmpty()) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val dashEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 5f), 0f)
+
+                horizontalSnapLines.forEach { (y, length) ->
+                    val allItemsX = pageData.items
+                        .filter { it.size != Size.Zero }
+                        .flatMap { listOf(it.offset.x, it.offset.x + it.size.width) }
+                    val minX = allItemsX.minOrNull() ?: 0f
+                    val maxX = allItemsX.maxOrNull() ?: canvasWidthPx
+
+                    drawLine(
+                        color = Color.Blue,
+                        start = Offset(minX, y),
+                        end = Offset(maxX, y),
+                        strokeWidth = 2f,
+                        pathEffect = dashEffect
+                    )
+                }
+
+                verticalSnapLines.forEach { (x, length) ->
+                    val allItemsY = pageData.items
+                        .filter { it.size != Size.Zero }
+                        .flatMap { listOf(it.offset.y, it.offset.y + it.size.height) }
+                    val minY = allItemsY.minOrNull() ?: 0f
+                    val maxY = allItemsY.maxOrNull() ?: canvasHeightPx
+                    drawLine(
+                        color = Color.Blue,
+                        start = Offset(x, minY),
+                        end = Offset(x, maxY),
+                        strokeWidth = 2f,
+                        pathEffect = dashEffect
+                    )
                 }
             }
         }
@@ -1260,6 +1358,7 @@ fun CollageScreen(
     var dragPreviewWidthPx by remember { mutableStateOf(0f) }
     var dragPreviewHeightPx by remember { mutableStateOf(0f) }
     var dragPreviewShowBorder by remember { mutableStateOf(false) }
+    var currentTargetPageIndex by remember { mutableStateOf<Int?>(null) }
 
     val lazyListState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -1285,7 +1384,7 @@ fun CollageScreen(
         }
     }
 
-    Column(Modifier.fillMaxSize().padding(bottom =70.dp).background(Color.DarkGray)) {
+    Column(Modifier.fillMaxSize().background(Color.DarkGray)) {
         TopAppBar(
             title = {
                 val pageCount = pages.size
@@ -1319,6 +1418,8 @@ fun CollageScreen(
                         isLastPage = pageIndex == pages.lastIndex,
                         draggingItemId = draggingItemId,
                         isDragging = isDragging,
+                        dragPreviewWidthPx = dragPreviewWidthPx,
+                        dragPreviewHeightPx = dragPreviewHeightPx,
                         modifier = Modifier
                             .fillParentMaxWidth()
                             .aspectRatio(1f / 1.41f),
@@ -1340,6 +1441,14 @@ fun CollageScreen(
                         },
                         onDragMove = { absolutePointerPos ->
                             dragPointerPosition = absolutePointerPos
+                            currentTargetPageIndex = pageCoords.entries
+                                .filter { it.value.isAttached }
+                                .minByOrNull { (_, layoutCoordinates) ->
+                                    val pageTop = layoutCoordinates.localToWindow(Offset.Zero).y
+                                    val pageBottom = pageTop + layoutCoordinates.size.height
+                                    if (absolutePointerPos.y in pageTop..pageBottom) 0f
+                                    else min(abs(pageTop - absolutePointerPos.y), abs(pageBottom - absolutePointerPos.y))
+                                }?.key
                         },
                         onDrop = {
                             val itemId = draggingItemId ?: return@CollagePage
@@ -1348,8 +1457,10 @@ fun CollageScreen(
                             val targetPageIndex = pageCoords.entries
                                 .filter { it.value.isAttached }
                                 .minByOrNull { (_, layoutCoordinates) ->
-                                    val pageCenterY = layoutCoordinates.localToWindow(Offset.Zero).y + layoutCoordinates.size.height / 2f
-                                    abs(pageCenterY - dragPointerPosition.y)
+                                    val pageTop = layoutCoordinates.localToWindow(Offset.Zero).y
+                                    val pageBottom = pageTop + layoutCoordinates.size.height
+                                    if (dragPointerPosition.y in pageTop..pageBottom) 0f
+                                    else min(abs(pageTop - dragPointerPosition.y), abs(pageBottom - dragPointerPosition.y))
                                 }?.key
 
                             if (targetPageIndex == null) {
@@ -1363,24 +1474,7 @@ fun CollageScreen(
                             val localPosInTarget = targetCoords.windowToLocal(dragPointerPosition)
                             val newOffset = localPosInTarget - dragTouchOffsetInsideImage
 
-                            // Chequeo de intersección: Calcula bounding box de la imagen post-drop
-                            val imgRight = newOffset.x + dragPreviewWidthPx
-                            val imgBottom = newOffset.y + dragPreviewHeightPx
-                            val pageWidth = targetCoords.size.width.toFloat()
-                            val pageHeight = targetCoords.size.height.toFloat()
-
-                            val intersects = !(newOffset.x >= pageWidth || newOffset.y >= pageHeight || imgRight <= 0f || imgBottom <= 0f)
-
-                            if (!intersects) {
-                                // Completamente fuera: Cancelar drop
-                                isDragging = false
-                                draggingItemId = null
-                                dragPreviewBitmap = null
-                                return@CollagePage
-                            }
-
-                            // Drop válido: Usa offset libre (permite partial oculta)
-                            val finalItem = CollageItemData(id = itemId, bitmap = bmp, offset = newOffset)
+                            val finalItem = CollageItemData(id = itemId, bitmap = bmp, offset = newOffset, size = Size(dragPreviewWidthPx, dragPreviewHeightPx))
 
                             pages = pages.mapIndexed { index, pageData ->
                                 val itemsWithoutDragged = pageData.items.filterNot { it.id == itemId }
@@ -1404,7 +1498,11 @@ fun CollageScreen(
                                 val oldPage = this[idx]
                                 this[idx] = oldPage.copy(items = updatedItems)
                             }.toList()
-                        }
+                        },
+                        currentTargetPageIndex = currentTargetPageIndex,
+                        dragPreviewOffsetInTarget = if (currentTargetPageIndex == pageIndex && isDragging) {
+                            pageCoords[pageIndex]?.windowToLocal(dragPointerPosition)?.minus(dragTouchOffsetInsideImage) ?: Offset.Zero
+                        } else null
                     )
                 }
 
@@ -1415,10 +1513,9 @@ fun CollageScreen(
                 }
             }
 
-            // Preview flotante
             if (isDragging && dragPreviewBitmap != null) {
                 val density = LocalDensity.current
-                val containerBasePosition = dragContainerCoords?.localToWindow(Offset.Zero) ?: Offset.Zero  // Base absoluta del Box
+                val containerBasePosition = dragContainerCoords?.localToWindow(Offset.Zero) ?: Offset.Zero
                 val adjustedPointerX = dragPointerPosition.x - containerBasePosition.x
                 val adjustedPointerY = dragPointerPosition.y - containerBasePosition.y
                 val offsetLeft = with(density) { (adjustedPointerX - dragTouchOffsetInsideImage.x).toDp() }
@@ -1440,15 +1537,14 @@ fun CollageScreen(
                         .zIndex(10f)
                 )
             }
+
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .onGloballyPositioned { dragContainerCoords = it }
             )
         }
-
     }
-
 }
 
 @Composable
@@ -1458,7 +1554,7 @@ fun AddPageCanvas(onClick: () -> Unit, modifier: Modifier = Modifier) {
             .clip(RoundedCornerShape(8.dp))
             .background(Color.White.copy(alpha = 0.2f))
             .clickable(onClick = onClick)
-            .padding(5.dp),
+            .padding(16.dp),
         contentAlignment = Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -1468,4 +1564,3 @@ fun AddPageCanvas(onClick: () -> Unit, modifier: Modifier = Modifier) {
         }
     }
 }
-
