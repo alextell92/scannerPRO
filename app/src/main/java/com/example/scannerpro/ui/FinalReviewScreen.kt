@@ -1044,6 +1044,7 @@ private object AppPreferences {
 }
 
 
+// --- Data Classes (Asegúrate que estén definidas en tu proyecto) ---
 data class CollageItemData(
     val id: Long = System.nanoTime(),
     val bitmap: Bitmap,
@@ -1222,8 +1223,8 @@ fun CollagePage(
             )
 
             if (selectedItemId == item.id && !isBeingDragged) {
-                IconButton(
-                    onClick = { onItemRemoved(item.id) },
+                Box(
+                    contentAlignment = Alignment.Center,
                     modifier = Modifier
                         .offset {
                             IntOffset(
@@ -1231,105 +1232,105 @@ fun CollagePage(
                                 (currentOffset.y - (closeSizePx / 2f)).roundToInt()
                             )
                         }
-                        .size(24.dp)
-                        .background(Color.Red, CircleShape)
+                        .size(20.dp)
+                        .clip(CircleShape)
+                        .background(Color.Red)
+                        .clickable { onItemRemoved(item.id) }
                 ) {
-                    Icon(Icons.Default.Close, contentDescription = "Eliminar", tint = Color.White)
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = "Eliminar",
+                        tint = Color.White,
+                        modifier = Modifier.size(14.dp)
+                    )
                 }
             }
         }
 
-        // NEW: Snap guides
+        // --- INICIO DE CAMBIOS: LÓGICA DE SNAPS AJUSTADA ---
         val snapThresholdPx = 5f
-        // CORREGIDO: Se inicializa el estado con una lista vacía.
-        var horizontalSnapLines by remember { mutableStateOf(emptyList<Pair<Float, Float>>()) }  // (y, startX, endX)
-        var verticalSnapLines by remember { mutableStateOf(emptyList<Pair<Float, Float>>()) }    // (x, startY, endY)
 
-        LaunchedEffect(isDragging, dragPreviewOffsetInTarget, pageData.items, dragPreviewWidthPx, dragPreviewHeightPx) {
+        val (horizontalSnapLines, verticalSnapLines) = remember(isDragging, dragPreviewOffsetInTarget, pageData.items, draggingItemId) {
             if (currentTargetPageIndex != pageIndex || dragPreviewOffsetInTarget == null || !isDragging) {
-                horizontalSnapLines = emptyList()
-                verticalSnapLines = emptyList()
-                return@LaunchedEffect
-            }
+                Pair(emptyList(), emptyList())
+            } else {
+                val otherItems = pageData.items.filter { it.id != draggingItemId && it.size != Size.Zero }
+                val previewX = dragPreviewOffsetInTarget.x
+                val previewY = dragPreviewOffsetInTarget.y
+                val previewW = dragPreviewWidthPx
+                val previewH = dragPreviewHeightPx
 
-            val otherItems = pageData.items.filter { it.id != draggingItemId && it.size != Size.Zero }
-            val previewX = dragPreviewOffsetInTarget.x
-            val previewY = dragPreviewOffsetInTarget.y
-            val previewW = dragPreviewWidthPx
-            val previewH = dragPreviewHeightPx
+                // Usamos Triples para guardar (coordenada, inicio_linea, fin_linea)
+                val hSnaps = mutableListOf<Triple<Float, Float, Float>>()
+                val vSnaps = mutableListOf<Triple<Float, Float, Float>>()
 
-            val hSnaps = mutableListOf<Pair<Float, Float>>()
-            val vSnaps = mutableListOf<Pair<Float, Float>>()
+                // Calcular los límites del contenido para que las guías se extiendan correctamente
+                val previewBoundsX = listOf(previewX, previewX + previewW)
+                val allBoundsX = otherItems.flatMap { listOf(it.offset.x, it.offset.x + it.size.width) } + previewBoundsX
+                val contentMinX = allBoundsX.minOrNull() ?: 0f
+                val contentMaxX = allBoundsX.maxOrNull() ?: canvasWidthPx
 
-            otherItems.forEach { other ->
-                val oX = other.offset.x
-                val oY = other.offset.y
-                val oW = other.size.width
-                val oH = other.size.height
+                val previewBoundsY = listOf(previewY, previewY + previewH)
+                val allBoundsY = otherItems.flatMap { listOf(it.offset.y, it.offset.y + it.size.height) } + previewBoundsY
+                val contentMinY = allBoundsY.minOrNull() ?: 0f
+                val contentMaxY = allBoundsY.maxOrNull() ?: canvasHeightPx
 
-                // Vertical alignments (vertical lines)
-                listOf(oX, oX + oW / 2f, oX + oW).forEach { snapX ->
-                    listOf(previewX, previewX + previewW / 2f, previewX + previewW).forEach { previewSnapX ->
-                        if (abs(previewSnapX - snapX) <= snapThresholdPx) {
-                            val minY = min(previewY, oY)
-                            val maxY = max(previewY + previewH, oY + oH)
-                            vSnaps.add(snapX to (maxY - minY))
+                otherItems.forEach { other ->
+                    val oX = other.offset.x
+                    val oY = other.offset.y
+                    val oW = other.size.width
+                    val oH = other.size.height
+
+                    // Vertical alignments (líneas verticales)
+                    listOf(oX, oX + oW / 2f, oX + oW).forEach { snapX ->
+                        listOf(previewX, previewX + previewW / 2f, previewX + previewW).forEach { previewSnapX ->
+                            if (abs(previewSnapX - snapX) <= snapThresholdPx) {
+                                vSnaps.add(Triple(snapX, contentMinY, contentMaxY))
+                            }
+                        }
+                    }
+
+                    // Horizontal alignments (líneas horizontales)
+                    listOf(oY, oY + oH / 2f, oY + oH).forEach { snapY ->
+                        listOf(previewY, previewY + previewH / 2f, previewY + previewH).forEach { previewSnapY ->
+                            if (abs(previewSnapY - snapY) <= snapThresholdPx) {
+                                hSnaps.add(Triple(snapY, contentMinX, contentMaxX))
+                            }
                         }
                     }
                 }
-
-                // Horizontal alignments (horizontal lines)
-                listOf(oY, oY + oH / 2f, oY + oH).forEach { snapY ->
-                    listOf(previewY, previewY + previewH / 2f, previewY + previewH).forEach { previewSnapY ->
-                        if (abs(previewSnapY - snapY) <= snapThresholdPx) {
-                            val minX = min(previewX, oX)
-                            val maxX = max(previewX + previewW, oX + oW)
-                            hSnaps.add(snapY to (maxX - minX))
-                        }
-                    }
-                }
+                Pair(hSnaps.distinct(), vSnaps.distinct())
             }
-
-            horizontalSnapLines = hSnaps.distinct()
-            verticalSnapLines = vSnaps.distinct()
         }
 
         if (horizontalSnapLines.isNotEmpty() || verticalSnapLines.isNotEmpty()) {
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val dashEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 5f), 0f)
 
-                horizontalSnapLines.forEach { (y, length) ->
-                    val allItemsX = pageData.items
-                        .filter { it.size != Size.Zero }
-                        .flatMap { listOf(it.offset.x, it.offset.x + it.size.width) }
-                    val minX = allItemsX.minOrNull() ?: 0f
-                    val maxX = allItemsX.maxOrNull() ?: canvasWidthPx
-
+                // Dibuja las guías horizontales
+                horizontalSnapLines.forEach { (y, startX, endX) ->
                     drawLine(
-                        color = Color.Blue,
-                        start = Offset(minX, y),
-                        end = Offset(maxX, y),
-                        strokeWidth = 2f,
+                        color = Color.Red,
+                        start = Offset(startX, y),
+                        end = Offset(endX, y),
+                        strokeWidth = 4f,
                         pathEffect = dashEffect
                     )
                 }
 
-                verticalSnapLines.forEach { (x, length) ->
-                    val allItemsY = pageData.items
-                        .filter { it.size != Size.Zero }
-                        .flatMap { listOf(it.offset.y, it.offset.y + it.size.height) }
-                    val minY = allItemsY.minOrNull() ?: 0f
-                    val maxY = allItemsY.maxOrNull() ?: canvasHeightPx
+                // Dibuja las guías verticales
+                verticalSnapLines.forEach { (x, startY, endY) ->
                     drawLine(
-                        color = Color.Blue,
-                        start = Offset(x, minY),
-                        end = Offset(x, maxY),
-                        strokeWidth = 2f,
+                        color = Color.Red,
+                        start = Offset(x, startY),
+                        end = Offset(x, endY),
+                        strokeWidth = 4f,
                         pathEffect = dashEffect
                     )
                 }
             }
         }
+        // --- FIN DE CAMBIOS ---
     }
 }
 
@@ -1384,7 +1385,7 @@ fun CollageScreen(
         }
     }
 
-    Column(Modifier.fillMaxSize().background(Color.DarkGray)) {
+    Column(Modifier.fillMaxSize().padding(bottom = 60.dp).background(Color.DarkGray)) {
         TopAppBar(
             title = {
                 val pageCount = pages.size
@@ -1564,3 +1565,4 @@ fun AddPageCanvas(onClick: () -> Unit, modifier: Modifier = Modifier) {
         }
     }
 }
+
