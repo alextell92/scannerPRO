@@ -90,6 +90,7 @@ dependencies {
     implementation(libs.ads.mobile.sdk)
     implementation(libs.androidx.foundation)
     implementation(libs.androidx.compose.testing)
+    implementation(libs.androidx.room.ktx)
     kapt(libs.androidx.room.compiler)
 
 
