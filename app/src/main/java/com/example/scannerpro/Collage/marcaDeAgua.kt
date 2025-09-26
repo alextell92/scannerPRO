@@ -46,6 +46,7 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -92,12 +93,14 @@ data class CollagePageData(
 fun WatermarkCanvas(
     watermark: WatermarkData,
     isDraggable: Boolean,
-    onDrag: (Offset) -> Unit, // recibe nueva posición absoluta del centro en px
+    onDrag: (Offset) -> Unit, // recibe nueva posición absoluta del centro en px (solo al terminar drag)
     pageWidthPx: Float,
     pageHeightPx: Float
 ) {
     val density = LocalDensity.current
-    val paint = remember(watermark) {
+
+    // Paint: recordar solo cuando cambie la configuración visual
+    val paint = remember(watermark.text, watermark.color, watermark.size, watermark.opacity, density) {
         android.graphics.Paint().apply {
             color = watermark.color.copy(alpha = watermark.opacity).toArgb()
             textSize = with(density) { watermark.size.sp.toPx() }
@@ -106,51 +109,87 @@ fun WatermarkCanvas(
         }
     }
 
+    // Métricas precalculadas (para evitar cálculos por frame)
+    val metrics = remember(watermark.text, paint, watermark.rotation) {
+        val ascent = paint.ascent() // negativo
+        val descent = paint.descent()
+        val textHeight = descent - ascent // positivo
+        val textBaseline = - (ascent + descent) / 2f
+        val textWidth = paint.measureText(watermark.text)
+        val padding = 24f
+        val rectWidth = textWidth + padding
+        val rectHeight = textHeight + padding
+        val halfW = rectWidth / 2f
+        val halfH = rectHeight / 2f
+        val strokeWidthPx = with(density) { 2.dp.toPx() }
+        val dashPathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 10f), 0f)
+        mapOf(
+            "ascent" to ascent,
+            "descent" to descent,
+            "textHeight" to textHeight,
+            "textBaseline" to textBaseline,
+            "textWidth" to textWidth,
+            "rectWidth" to rectWidth,
+            "rectHeight" to rectHeight,
+            "halfW" to halfW,
+            "halfH" to halfH,
+            "strokeWidthPx" to strokeWidthPx,
+            "dashEffect" to dashPathEffect
+        )
+    }
+
+    val dashEffect = metrics["dashEffect"] as PathEffect
+    val strokeWidthPx = metrics["strokeWidthPx"] as Float
+
+    // Estado local para arrastre. Actualizamos solo localmente durante el drag
     var isDragging by remember { mutableStateOf(false) }
     var dragPointerOffset by remember { mutableStateOf(Offset.Zero) }
+
+    // currentOffset: posición que se usa para dibujar la marca / patrón en pantalla.
+    var currentOffset by remember { mutableStateOf(Offset.Zero) }
+
+    val canvasSizeReady = remember { mutableStateOf(false) }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val canvasWidthPx = with(density) { maxWidth.toPx() }
         val canvasHeightPx = with(density) { maxHeight.toPx() }
-        val center = Offset(canvasWidthPx / 2f, canvasHeightPx / 2f)
+        val canvasCenter = Offset(canvasWidthPx / 2f, canvasHeightPx / 2f)
+
+        // Inicializar currentOffset cuando cambie watermark.offset o cuando la vista se mida
+        LaunchedEffect(watermark.offset, canvasWidthPx, canvasHeightPx) {
+            val initial = if (watermark.offset == Offset.Zero) canvasCenter else watermark.offset
+            currentOffset = initial
+            canvasSizeReady.value = true
+        }
 
         val interactionModifier = if (isDraggable) {
             Modifier.pointerInput(watermark, isDraggable) {
                 detectDragGestures(
                     onDragStart = { start ->
-                        val finalOffset = if (watermark.offset == Offset.Zero && !watermark.isPattern) center else watermark.offset
+                        // Use currentOffset (valor local estable)
+                        val finalOffset = currentOffset
 
-                        // Métricas textuales robustas
-                        val ascent = paint.ascent() // negativo
-                        val descent = paint.descent()
-                        val textHeight = descent - ascent // positivo
-                        val textWidth = paint.measureText(watermark.text)
+                        // Métricas extraídas
+                        val halfW = metrics["halfW"] as Float
+                        val halfH = metrics["halfH"] as Float
 
-                        val padding = 24f
-                        val rectWidth = textWidth + padding
-                        val rectHeight = textHeight + padding
-
-                        // Convertimos start al sistema centrado en finalOffset
+                        // Punto relativo al centro (finalOffset)
                         val dx = start.x - finalOffset.x
                         val dy = start.y - finalOffset.y
 
-                        // Des-rotamos el punto (rotación inversa)
+                        // Des-rotar el punto (rotación inversa)
                         val angleRad = -watermark.rotation * (Math.PI / 180.0)
                         val cosA = cos(angleRad)
                         val sinA = sin(angleRad)
                         val localX = (cosA * dx - sinA * dy).toFloat()
                         val localY = (sinA * dx + cosA * dy).toFloat()
 
-                        // Recto centrado en (0,0) --> boundaries simples
-                        val halfW = rectWidth / 2f
-                        val halfH = rectHeight / 2f
                         val margin = 8f
-
                         if (localX in (-halfW - margin)..(halfW + margin) &&
                             localY in (-halfH - margin)..(halfH + margin)
                         ) {
                             isDragging = true
-                            // guardamos offset global para evitar saltos: (puntero - centroActual)
+                            // Guardamos offset entre puntero y centro para evitar saltos
                             dragPointerOffset = start - finalOffset
                         } else {
                             isDragging = false
@@ -160,70 +199,118 @@ fun WatermarkCanvas(
                         if (!isDragging) return@detectDragGestures
                         change.consume()
                         val pointerPos = change.position
-                        val newCenter = pointerPos - dragPointerOffset
-                        onDrag(newCenter)
+                        // Mover localmente sin notificar al padre (evita recomposiciones externas)
+                        currentOffset = pointerPos - dragPointerOffset
                     },
-                    onDragEnd = { isDragging = false },
-                    onDragCancel = { isDragging = false }
+                    onDragEnd = {
+                        if (isDragging) {
+                            // Al terminar, notificamos la nueva posición absoluta al padre
+                            onDrag(currentOffset)
+                        }
+                        isDragging = false
+                    },
+                    onDragCancel = {
+                        if (isDragging) {
+                            onDrag(currentOffset)
+                        }
+                        isDragging = false
+                    }
                 )
             }
         } else Modifier
 
-        Canvas(modifier = Modifier.fillMaxSize().then(interactionModifier)) {
-            val finalOffset = if (watermark.offset == Offset.Zero && !watermark.isPattern) center else watermark.offset
+        // Canvas usando currentOffset para dibujar
+        Canvas(
+            modifier = Modifier
+                .fillMaxSize()
+                .then(interactionModifier)
+        ) {
+            if (!canvasSizeReady.value) return@Canvas
 
             drawIntoCanvas { canvas ->
-                // Dibujamos todo relativo a finalOffset; centramos el texto en (0,0) antes de rotar
-                canvas.nativeCanvas.save()
-                canvas.nativeCanvas.translate(finalOffset.x, finalOffset.y)
-                canvas.nativeCanvas.rotate(watermark.rotation)
-
-                // Métricas para centrar correctamente (usamos baseline shift)
-                val ascent = paint.ascent()
-                val descent = paint.descent()
-                val textBaseline = - (ascent + descent) / 2f // así el texto queda verticalmente centrado en y=0
-
+                // --------------------------
+                // 1) Dibujar patrón o no
+                // --------------------------
                 if (watermark.isPattern) {
-                    val textWidth = paint.measureText(watermark.text)
-                    val textHeight = paint.textSize
-                    val spacing = textWidth * 1.5f
+                    // Dibujar patrón centrado en currentOffset (ahora garantizando que exista una celda en (0,0))
+                    canvas.nativeCanvas.save()
+                    canvas.nativeCanvas.translate(currentOffset.x, currentOffset.y)
+                    canvas.nativeCanvas.rotate(watermark.rotation)
 
-                    var y = -pageHeightPx * 1.5f
-                    while (y < pageHeightPx * 2.5f) {
-                        var x = -pageWidthPx * 1.5f
-                        while (x < pageWidthPx * 2.5f) {
-                            canvas.nativeCanvas.drawText(watermark.text, x, y + textBaseline, paint)
-                            x += spacing
+                    val textWidth = metrics["textWidth"] as Float
+                    val textHeight = paint.textSize
+                    val spacingX = textWidth * 1.5f
+                    val spacingY = textHeight * 3f
+                    val textBase = metrics["textBaseline"] as Float
+
+                    // AREA CENTRAL (no dibujar aquí para evitar duplicado con la instancia central)
+                    val halfW = metrics["halfW"] as Float
+                    val halfH = metrics["halfH"] as Float
+                    val skipPadding = 8f // ajustable si quieres más/menos hueco alrededor de la instancia central
+                    val centerSkipW = halfW + skipPadding
+                    val centerSkipH = halfH + skipPadding
+
+                    // Calcula rangos a cubrir (misma lógica que antes)
+                    val coverHalfWidth = pageWidthPx * 1.5f
+                    val coverHalfHeight = pageHeightPx * 1.5f
+                    val endX = pageWidthPx * 2.5f
+                    val endY = pageHeightPx * 2.5f
+
+                    // Asegurarnos que startX/startY sean múltiplos de spacing para que exista una celda en 0
+                    val leftCells = kotlin.math.ceil(coverHalfWidth / spacingX).toInt()
+                    val topCells = kotlin.math.ceil(coverHalfHeight / spacingY).toInt()
+                    val startX = -leftCells * spacingX
+                    val startY = -topCells * spacingY
+
+                    var y = startY
+                    while (y < endY) {
+                        var x = startX
+                        while (x < endX) {
+                            // Omitir celdas que caerían dentro del rectángulo central (para no duplicar la instancia)
+                            if (!(x >= -centerSkipW && x <= centerSkipW && y >= -centerSkipH && y <= centerSkipH)) {
+                                canvas.nativeCanvas.drawText(watermark.text, x, y + textBase, paint)
+                            }
+                            x += spacingX
                         }
-                        y += textHeight * 3
+                        y += spacingY
                     }
-                } else {
-                    canvas.nativeCanvas.drawText(watermark.text, 0f, textBaseline, paint)
+
+                    canvas.nativeCanvas.restore()
                 }
 
+
+                // --------------------------
+                // 2) Dibujar instancia central (siempre encima, tanto para patrón como para único)
+                // --------------------------
+                canvas.nativeCanvas.save()
+                canvas.nativeCanvas.translate(currentOffset.x, currentOffset.y)
+                canvas.nativeCanvas.rotate(watermark.rotation)
+
+                val textBaseline = metrics["textBaseline"] as Float
+                // Texto central (la "muestra" que se arrastra)
+                canvas.nativeCanvas.drawText(watermark.text, 0f, textBaseline, paint)
                 canvas.nativeCanvas.restore()
 
-                // Dibujar la caja verde ancla centrada en finalOffset y rotada (consistente con hit-test)
+                // --------------------------
+                // 3) Dibujar caja verde rotada (hit area) alrededor de la instancia central
+                // --------------------------
                 if (isDraggable) {
-                    val textWidth = paint.measureText(watermark.text)
-                    val textHeight = paint.descent() - paint.ascent()
-                    val rectWidth = textWidth + 24f
-                    val rectHeight = textHeight + 24f
-                    val halfW = rectWidth / 2f
-                    val halfH = rectHeight / 2f
+                    val rectWidth = metrics["rectWidth"] as Float
+                    val rectHeight = metrics["rectHeight"] as Float
+                    val halfW = metrics["halfW"] as Float
+                    val halfH = metrics["halfH"] as Float
 
-                    // top-left del rect en coordenadas globales antes de rotar: centrado en finalOffset
-                    val rectTopLeft = Offset(finalOffset.x - halfW, finalOffset.y - halfH)
+                    val rectTopLeft = Offset(currentOffset.x - halfW, currentOffset.y - halfH)
 
-                    // Para que la caja quede rotada igual que el texto, rotamos el canvas alrededor de finalOffset
                     canvas.nativeCanvas.save()
-                    canvas.nativeCanvas.rotate(watermark.rotation, finalOffset.x, finalOffset.y)
+                    canvas.nativeCanvas.rotate(watermark.rotation, currentOffset.x, currentOffset.y)
 
+                    // dibujar con stroke punteado (usamos drawRect de Compose para aplicar pathEffect)
                     drawRect(
                         color = Color.Green,
                         topLeft = rectTopLeft,
                         size = Size(rectWidth, rectHeight),
-                        style = Stroke(width = 2.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 10f), 0f))
+                        style = Stroke(width = strokeWidthPx, pathEffect = dashEffect)
                     )
 
                     canvas.nativeCanvas.restore()
@@ -232,10 +319,6 @@ fun WatermarkCanvas(
         }
     }
 }
-
-
-
-
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -372,8 +455,6 @@ fun WatermarkEditorScreen(
     }
 }
 
-
-
 @Composable
 private fun WatermarkTextDialog(initialText: String, onConfirm: (String) -> Unit, onDismiss: () -> Unit) {
     var text by remember { mutableStateOf(initialText) }
@@ -439,13 +520,5 @@ private fun WatermarkStyleEditor(watermark: WatermarkData, onUpdate: (WatermarkD
 }
 
 // Dummy MainActionItem for compilation
-@Composable
-fun MainActionItem(text: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit) {
-    TextButton(onClick = onClick) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(icon, contentDescription = text, tint = Color.White)
-            Text(text, color = Color.White, fontSize = 12.sp)
-        }
-    }
-}
+
 
