@@ -621,6 +621,9 @@ fun CollageScreen(
     }
 }
 
+// ====================================================================================
+// ============================= AQUI ESTÁN LOS CAMBIOS =============================
+// ====================================================================================
 @Composable
 private fun CollageBottomMenu(
     isTemplateMenuVisible: Boolean,
@@ -651,15 +654,38 @@ private fun CollageBottomMenu(
             }
         }
         Surface(color = Color(0xFF2C2C2E), contentColor = Color.White) {
-            Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.SpaceEvenly) {
-                    MainActionItem("Plantilla", Icons.Default.AutoAwesomeMosaic, onTemplateButtonClicked)
-                    MainActionItem("Marca de agua", Icons.Default.BrandingWatermark, onWatermarkClicked)
-                    MainActionItem("Tamaño", Icons.Default.PhotoSizeSelectLarge, onSizeButtonClicked)
-                    MainActionItem("Agregar", Icons.Default.NoteAdd, onAddPage)
-                    MainActionItem("Eliminar", Icons.Default.Delete, onDeletePage, isDeleteEnabled)
+            // CHANGED: Row principal ahora tiene padding horizontal para dar espacio en los bordes
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp, horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // CHANGED: Reemplazamos la Row interna con una LazyRow para hacerla desplazable.
+                LazyRow(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp), // ADDED: Espaciado consistente entre ítems.
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    item { MainActionItem("Plantilla", Icons.Default.AutoAwesomeMosaic, onTemplateButtonClicked) }
+                    item { MainActionItem("Marca de agua", Icons.Default.BrandingWatermark, onWatermarkClicked) }
+                    item { MainActionItem("Tamaño", Icons.Default.PhotoSizeSelectLarge, onSizeButtonClicked) }
+                    item { MainActionItem("Agregar", Icons.Default.NoteAdd, onAddPage) }
+                    item { MainActionItem("Eliminar", Icons.Default.Delete, onDeletePage, isDeleteEnabled) }
                 }
-                Box(modifier = Modifier.padding(end = 16.dp).size(48.dp).clip(CircleShape).background(Color.Green).clickable(onClick = onSave), contentAlignment = Alignment.Center){
+
+                // ADDED: Un espaciador para asegurar que el botón de guardar no se pegue a la lista.
+                Spacer(modifier = Modifier.width(12.dp))
+
+                // El botón de guardar se mantiene fuera de la LazyRow para que no se desplace.
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .background(Color.Green)
+                        .clickable(onClick = onSave),
+                    contentAlignment = Alignment.Center
+                ) {
                     Icon(Icons.Default.Check, "Guardar", tint = Color.Black)
                 }
             }
@@ -690,8 +716,11 @@ private fun TemplateSelectionRow(templates: List<CollageTemplate>, selected: Str
 fun MainActionItem(text: String, icon: ImageVector, onClick: () -> Unit, enabled: Boolean = true) {
     val color = if (enabled) Color.White else Color.Gray
     Column(
-        modifier = Modifier.clickable(enabled = enabled, onClick = onClick).padding(horizontal = 4.dp),
-        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center
+        modifier = Modifier
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 4.dp), // Mantenemos un padding pequeño para el área de click
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
     ) {
         Icon(icon, text, tint = color)
         Spacer(Modifier.height(4.dp))
@@ -793,7 +822,3 @@ private fun applyTemplateToItems(
     }
     return updatedItems
 }
-
-
-
-
