@@ -69,7 +69,6 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.LayoutCoordinates
@@ -84,7 +83,6 @@ import androidx.compose.ui.zIndex
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlin.math.abs
 import kotlin.math.min
 import kotlin.math.roundToInt
 
@@ -96,7 +94,6 @@ data class CollageItemData(
     val offset: Offset = Offset.Zero,
     val size: Size = Size.Zero
 )
-
 
 
 data class CollageTemplate(val name: String, val rows: Int, val cols: Int)
@@ -177,8 +174,6 @@ fun CollagePage(
             }
         }
 
-        val closeSizePx = with(density) { 24.dp.toPx() }
-
         pageData.items.forEach { item ->
             val currentOffset = item.offset
             val isBeingDragged = isDragging && draggingItemId == item.id
@@ -253,18 +248,19 @@ fun CollagePage(
             Box(
                 modifier = Modifier
                     .offset { IntOffset(currentOffset.x.roundToInt(), currentOffset.y.roundToInt()) }
-                    .width(imageWidthDp)
-                    .aspectRatio(aspect)
+                    .width(with(density) { item.size.width.toDp() })
+                    .height(with(density) { item.size.height.toDp() })
                     .then(dragModifier)
             )
 
             if (isInteractive && selectedItemId == item.id && !isBeingDragged) {
+                val closeSizePx = with(density) { 24.dp.toPx() }
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
                         .offset {
                             IntOffset(
-                                (currentOffset.x + imageWidthPx - (closeSizePx / 2f)).roundToInt(),
+                                (currentOffset.x + item.size.width - (closeSizePx / 2f)).roundToInt(),
                                 (currentOffset.y - (closeSizePx / 2f)).roundToInt()
                             )
                         }
@@ -278,63 +274,14 @@ fun CollagePage(
             }
         }
 
-        val snapThresholdPx = 5f
-
-        val (horizontalSnapLines, verticalSnapLines) = remember(isDragging, dragPreviewOffsetInTarget, pageData.items, draggingItemId) {
-            if (currentTargetPageIndex != pageIndex || dragPreviewOffsetInTarget == null || !isDragging) {
-                Pair(emptyList(), emptyList())
-            } else {
-                val otherItems = pageData.items.filter { it.id != draggingItemId && it.size != Size.Zero }
-                val previewX = dragPreviewOffsetInTarget.x
-                val previewY = dragPreviewOffsetInTarget.y
-                val previewW = dragPreviewWidthPx
-                val previewH = dragPreviewHeightPx
-
-                val hSnaps = mutableListOf<Triple<Float, Float, Float>>()
-                val vSnaps = mutableListOf<Triple<Float, Float, Float>>()
-
-                val previewBoundsX = listOf(previewX, previewX + previewW)
-                val allBoundsX = otherItems.flatMap { listOf(it.offset.x, it.offset.x + it.size.width) } + previewBoundsX
-                val contentMinX = allBoundsX.minOrNull() ?: 0f
-                val contentMaxX = allBoundsX.maxOrNull() ?: canvasWidthPx
-
-                val previewBoundsY = listOf(previewY, previewY + previewH)
-                val allBoundsY = otherItems.flatMap { listOf(it.offset.y, it.offset.y + it.size.height) } + previewBoundsY
-                val contentMinY = allBoundsY.minOrNull() ?: 0f
-                val contentMaxY = allBoundsY.maxOrNull() ?: canvasHeightPx
-
-                otherItems.forEach { other ->
-                    val oX = other.offset.x; val oY = other.offset.y; val oW = other.size.width; val oH = other.size.height
-                    listOf(oX, oX + oW / 2f, oX + oW).forEach { snapX ->
-                        listOf(previewX, previewX + previewW / 2f, previewX + previewW).forEach { previewSnapX ->
-                            if (abs(previewSnapX - snapX) <= snapThresholdPx) vSnaps.add(Triple(snapX, contentMinY, contentMaxY))
-                        }
-                    }
-                    listOf(oY, oY + oH / 2f, oY + oH).forEach { snapY ->
-                        listOf(previewY, previewY + previewH / 2f, previewY + previewH).forEach { previewSnapY ->
-                            if (abs(previewSnapY - snapY) <= snapThresholdPx) hSnaps.add(Triple(snapY, contentMinX, contentMaxX))
-                        }
-                    }
-                }
-                Pair(hSnaps.distinct(), vSnaps.distinct())
-            }
-        }
-
-        if (horizontalSnapLines.isNotEmpty() || verticalSnapLines.isNotEmpty()) {
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                val dashEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 5f), 0f)
-                horizontalSnapLines.forEach { (y, startX, endX) ->
-                    drawLine(Color.Red, start = Offset(startX, y), end = Offset(endX, y), strokeWidth = 4f, pathEffect = dashEffect)
-                }
-                verticalSnapLines.forEach { (x, startY, endY) ->
-                    drawLine(Color.Red, start = Offset(x, startY), end = Offset(x, endY), strokeWidth = 4f, pathEffect = dashEffect)
-                }
-            }
-        }
-
         if (watermarkToDraw != null) {
-            // Se asume que WatermarkCanvas y WatermarkEditorScreen existen en otros archivos
-            // WatermarkCanvas( ... )
+            WatermarkCanvas(
+                watermark = watermarkToDraw,
+                isDraggable = isWatermarkDraggable,
+                onDrag = onWatermarkDrag,
+                pageWidthPx = canvasWidthPx,
+                pageHeightPx = canvasHeightPx
+            )
         }
     }
 }
@@ -368,6 +315,7 @@ fun CollageScreen(
 
     var showDeleteDialog by remember { mutableStateOf(false) }
     var pageIndexToDelete by remember { mutableStateOf<Int?>(null) }
+    var showExitDialog by remember { mutableStateOf(false) }
 
     var isTemplateMenuVisible by remember { mutableStateOf(false) }
     var selectedTemplateName by remember { mutableStateOf<String?>(null) }
@@ -423,10 +371,8 @@ fun CollageScreen(
         val currentTemplate = selectedTemplateName?.let { name -> templates.find { it.name == name } }
 
         if (currentTemplate != null) {
-            // Si hay una plantilla, se usa la lógica existente
             reapplyLayout(currentTemplate, selectedPageSize)
         } else {
-            // Si no hay plantilla (diseño libre), se reescala para encajar en la nueva proporción
             val oldAspectRatio = previousPageSize.aspectRatio
             val newAspectRatio = selectedPageSize.aspectRatio
 
@@ -437,7 +383,6 @@ fun CollageScreen(
                 pages = pages.map { page ->
                     if (page.items.isEmpty()) return@map page
 
-                    // 1. Encontrar el bounding box actual de las imágenes
                     val minX = page.items.minOf { it.offset.x }
                     val minY = page.items.minOf { it.offset.y }
                     val maxX = page.items.maxOf { it.offset.x + it.size.width }
@@ -448,25 +393,21 @@ fun CollageScreen(
 
                     if (boxWidth <= 0 || boxHeight <= 0) return@map page
 
-                    // 2. Calcular factor de escala para que el grupo quepa en el nuevo lienzo
-                    val marginFactor = 0.05f // 5% de margen a cada lado
+                    val marginFactor = 0.05f
                     val targetWidth = canvasWidth * (1 - 2 * marginFactor)
                     val targetHeight = newCanvasHeight * (1 - 2 * marginFactor)
 
                     val scale = min(targetWidth / boxWidth, targetHeight / boxHeight)
 
-                    // 3. Calcular el offset para centrar el nuevo grupo de imágenes
                     val newBoxWidth = boxWidth * scale
                     val newBoxHeight = boxHeight * scale
                     val boxStartX = (canvasWidth - newBoxWidth) / 2
                     val boxStartY = (newCanvasHeight - newBoxHeight) / 2
 
                     val updatedItems = page.items.map { item ->
-                        // 4. Calcular la posición relativa de la imagen dentro del grupo y escalarla
                         val relativeOffsetX = (item.offset.x - minX) * scale
                         val relativeOffsetY = (item.offset.y - minY) * scale
 
-                        // 5. Calcular nuevo tamaño y la nueva posición absoluta en el lienzo
                         val newSize = Size(item.size.width * scale, item.size.height * scale)
                         val newOffset = Offset(boxStartX + relativeOffsetX, boxStartY + relativeOffsetY)
 
@@ -476,7 +417,6 @@ fun CollageScreen(
                 }
             }
         }
-        // Se actualiza el valor previo para el siguiente cambio
         setPreviousPageSize(selectedPageSize)
     }
 
@@ -517,10 +457,28 @@ fun CollageScreen(
         )
     }
 
+    if (showExitDialog) {
+        ExitConfirmationDialog(
+            onConfirm = onClose,
+            onDismiss = { showExitDialog = false }
+        )
+    }
+
 
     if (showWatermarkEditor) {
-        // Se asume que WatermarkEditorScreen existe en otro archivo
-        // WatermarkEditorScreen(...)
+        WatermarkEditorScreen(
+            initialWatermark = appliedWatermark,
+            previewPage = pages.firstOrNull(),
+            onDismiss = { showWatermarkEditor = false },
+            onApply = { newWatermark ->
+                appliedWatermark = newWatermark
+                showWatermarkEditor = false
+            },
+            onRemove = {
+                appliedWatermark = null
+                showWatermarkEditor = false
+            }
+        )
     } else {
         Scaffold(
             topBar = {
@@ -530,7 +488,7 @@ fun CollageScreen(
                         val currentPage = (lazyListState.firstVisibleItemIndex + 1).coerceIn(1, pageCount)
                         Text("Editor ($currentPage / $pageCount)", color = Color.White)
                     },
-                    navigationIcon = { IconButton(onClick = onClose) { Icon(Icons.Default.Close, "Cerrar", tint = Color.White) } },
+                    navigationIcon = { IconButton(onClick = { showExitDialog = true }) { Icon(Icons.Default.Close, "Cerrar", tint = Color.White) } },
                     actions = {},
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF2C2C2E))
                 )
@@ -595,8 +553,8 @@ fun CollageScreen(
                             dragPreviewWidthPx = dragPreviewWidthPx,
                             dragPreviewHeightPx = dragPreviewHeightPx,
                             watermarkToDraw = appliedWatermark,
-                            isWatermarkDraggable = false, // Simulación
-                            onWatermarkDrag = {}, // Simulación
+                            isWatermarkDraggable = false,
+                            onWatermarkDrag = {},
                             modifier = Modifier
                                 .fillParentMaxWidth()
                                 .onGloballyPositioned {
@@ -860,6 +818,17 @@ private fun DeleteConfirmationDialog(onConfirm: () -> Unit, onDismiss: () -> Uni
         title = { Text("Confirmar Eliminación") },
         text = { Text("¿Estás seguro de que quieres eliminar esta página? Esta acción no se puede deshacer.") },
         confirmButton = { TextButton(onClick = onConfirm) { Text("Eliminar") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } }
+    )
+}
+
+@Composable
+private fun ExitConfirmationDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Salir sin Guardar") },
+        text = { Text("¿Estás seguro de que quieres salir? Se perderán los cambios no guardados.") },
+        confirmButton = { TextButton(onClick = onConfirm) { Text("Salir") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } }
     )
 }
