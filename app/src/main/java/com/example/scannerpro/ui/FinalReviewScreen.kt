@@ -8,7 +8,6 @@ import android.os.Build
 import android.provider.MediaStore
 import android.util.Log
 import android.widget.Toast
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -31,6 +30,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.CornerSize
 import androidx.compose.material.icons.Icons
@@ -63,6 +63,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -101,13 +102,13 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 
-private enum class ViewMode { LIST, GRID }
+private enum class ViewMode { LIST, GRID, PAGE }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FinalReviewScreen(
     initialBitmaps: List<Bitmap>,
-    repository: DocumentRepository, // <-- AÑADE ESTE PARÁMETRO
+    repository: DocumentRepository,
     onEditRequest: (Int) -> Unit,
     onAddAnotherScan: () -> Unit,
     onFinish: () -> Unit
@@ -147,25 +148,23 @@ fun FinalReviewScreen(
         } else if (isCollageMode) {
             CollageScreen(
                 initialBitmaps = bitmapsForCollage,
-                repository = repository, // <-- PARÁMETRO QUE FALTA
+                repository = repository,
                 onClose = { isCollageMode = false },
-                onSave = { pages ->
-                    // Ya no necesitas el Toast aquí, el guardado se maneja dentro
+                onSave = {
                     isCollageMode = false
                 }
             )
         } else {
-            // --- INICIO DEL CAMBIO ---
-            // Ahora la vista normal (galería) y su barra de botones están dentro de un Box
-            // para que la barra se pueda alinear correctamente abajo.
             Box(modifier = Modifier.fillMaxSize()) {
                 Column(modifier = Modifier.fillMaxSize()) {
                     TopAppBar(
                         title = {
-                            Text(
-                                if (isSelectionModeActive) "${selectedIndices.size} seleccionados" else "Documentos (${bitmaps.size})",
-                                color = Color.White
-                            )
+                            val titleText = when {
+                                isSelectionModeActive -> "${selectedIndices.size} seleccionados"
+                                viewMode == ViewMode.PAGE && selectedIndex != null && bitmaps.isNotEmpty() -> "Página ${selectedIndex!! + 1} de ${bitmaps.size}"
+                                else -> "Documentos (${bitmaps.size})"
+                            }
+                            Text(titleText, color = Color.White)
                         },
                         navigationIcon = {
                             if (isSelectionModeActive) {
@@ -193,11 +192,20 @@ fun FinalReviewScreen(
                                     Icon(Icons.Default.CheckBox, "Seleccionar", tint = Color.White)
                                 }
                                 IconButton(onClick = {
-                                    viewMode = if (viewMode == ViewMode.LIST) ViewMode.GRID else ViewMode.LIST
+                                    viewMode = when (viewMode) {
+                                        ViewMode.LIST -> ViewMode.GRID
+                                        ViewMode.GRID -> ViewMode.PAGE
+                                        ViewMode.PAGE -> ViewMode.LIST
+                                    }
                                     AppPreferences.setViewMode(context, viewMode)
                                 }) {
+                                    val icon = when (viewMode) {
+                                        ViewMode.LIST -> Icons.Default.GridView
+                                        ViewMode.GRID -> Icons.Default.Image
+                                        ViewMode.PAGE -> Icons.Default.List
+                                    }
                                     Icon(
-                                        imageVector = if (viewMode == ViewMode.LIST) Icons.Default.GridView else Icons.Default.List,
+                                        imageVector = icon,
                                         contentDescription = "Cambiar vista",
                                         tint = Color.White
                                     )
@@ -207,78 +215,107 @@ fun FinalReviewScreen(
                         colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF2C2C2E))
                     )
 
-                    if (viewMode == ViewMode.LIST) {
-                        LazyColumn(
-                            modifier = Modifier.weight(1f),
-                            contentPadding = PaddingValues(
-                                start = 16.dp,
-                                end = 16.dp,
-                                top = 16.dp,
-                                bottom = 80.dp
-                            ),
-                            verticalArrangement = Arrangement.spacedBy(16.dp)
-                        ) {
-                            val count = bitmaps.size
-                            items(count + 1, key = { index -> if (index < count) bitmaps[index].hashCode() else "add_button_list" }) { index ->
-                                if (index < count) {
-                                    val bitmap = bitmaps[index]
-                                    BitmapListItem(
-                                        bitmap = bitmap,
-                                        pageNumber = index + 1,
-                                        isSelected = if (isSelectionModeActive) index in selectedIndices else selectedIndex == index,
-                                        isSelectionModeActive = isSelectionModeActive,
-                                        onClick = {
-                                            if (isSelectionModeActive) {
-                                                selectedIndices = if (index in selectedIndices) selectedIndices - index else selectedIndices + index
-                                            } else {
-                                                selectedIndex = index
+                    when (viewMode) {
+                        ViewMode.LIST -> {
+                            LazyColumn(
+                                modifier = Modifier.weight(1f),
+                                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 80.dp),
+                                verticalArrangement = Arrangement.spacedBy(16.dp)
+                            ) {
+                                val count = bitmaps.size
+                                items(count + 1, key = { index -> if (index < count) bitmaps[index].hashCode() else "add_button_list" }) { index ->
+                                    if (index < count) {
+                                        BitmapListItem(
+                                            bitmap = bitmaps[index],
+                                            pageNumber = index + 1,
+                                            isSelected = if (isSelectionModeActive) index in selectedIndices else selectedIndex == index,
+                                            isSelectionModeActive = isSelectionModeActive,
+                                            onClick = {
+                                                if (isSelectionModeActive) {
+                                                    selectedIndices = if (index in selectedIndices) selectedIndices - index else selectedIndices + index
+                                                } else {
+                                                    selectedIndex = index
+                                                }
                                             }
-                                        }
-                                    )
-                                } else {
-                                    AddPageListItem(onClick = onAddAnotherScan)
+                                        )
+                                    } else {
+                                        AddPageListItem(onClick = onAddAnotherScan)
+                                    }
                                 }
                             }
                         }
-                    } else { // GRID View
-                        LazyVerticalGrid(
-                            columns = GridCells.Fixed(2),
-                            modifier = Modifier.weight(1f),
-                            contentPadding = PaddingValues(
-                                start = 16.dp,
-                                end = 16.dp,
-                                top = 16.dp,
-                                bottom = 96.dp
-                            ),
-                            verticalArrangement = Arrangement.spacedBy(16.dp),
-                            horizontalArrangement = Arrangement.spacedBy(16.dp)
-                        ) {
-                            val count = bitmaps.size
-                            items(count + 1, key = { index -> if (index < count) bitmaps[index].hashCode() else "add_button_grid" }) { index ->
-                                if (index < count) {
-                                    val bitmap = bitmaps[index]
-                                    BitmapGridItem(
-                                        bitmap = bitmap,
-                                        pageNumber = index + 1,
-                                        isSelected = if (isSelectionModeActive) index in selectedIndices else selectedIndex == index,
-                                        isSelectionModeActive = isSelectionModeActive,
-                                        onClick = {
-                                            if (isSelectionModeActive) {
-                                                selectedIndices = if (index in selectedIndices) selectedIndices - index else selectedIndices + index
-                                            } else {
-                                                selectedIndex = index
+                        ViewMode.GRID -> {
+                            LazyVerticalGrid(
+                                columns = GridCells.Fixed(2),
+                                modifier = Modifier.weight(1f),
+                                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 96.dp),
+                                verticalArrangement = Arrangement.spacedBy(16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                            ) {
+                                val count = bitmaps.size
+                                items(count + 1, key = { index -> if (index < count) bitmaps[index].hashCode() else "add_button_grid" }) { index ->
+                                    if (index < count) {
+                                        BitmapGridItem(
+                                            bitmap = bitmaps[index],
+                                            pageNumber = index + 1,
+                                            isSelected = if (isSelectionModeActive) index in selectedIndices else selectedIndex == index,
+                                            isSelectionModeActive = isSelectionModeActive,
+                                            onClick = {
+                                                if (isSelectionModeActive) {
+                                                    selectedIndices = if (index in selectedIndices) selectedIndices - index else selectedIndices + index
+                                                } else {
+                                                    selectedIndex = index
+                                                }
                                             }
-                                        }
-                                    )
-                                } else {
-                                    AddPageGridItem(onClick = onAddAnotherScan)
+                                        )
+                                    } else {
+                                        AddPageGridItem(onClick = onAddAnotherScan)
+                                    }
+                                }
+                            }
+                        }
+                        ViewMode.PAGE -> {
+                            val listState = rememberLazyListState(initialFirstVisibleItemIndex = selectedIndex ?: 0)
+                            LaunchedEffect(listState.firstVisibleItemIndex) {
+                                selectedIndex = listState.firstVisibleItemIndex
+                            }
+
+                            LazyColumn(
+                                state = listState,
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(16.dp),
+                                contentPadding = PaddingValues(vertical = 16.dp)
+                            ) {
+                                items(bitmaps.size) { index ->
+                                    Box(
+                                        modifier = Modifier.fillParentMaxHeight(),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Image(
+                                            bitmap = bitmaps[index].asImageBitmap(),
+                                            contentDescription = "Página ${index + 1}",
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .padding(horizontal = 16.dp),
+                                            contentScale = ContentScale.Fit
+                                        )
+                                    }
+                                }
+                                item {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillParentMaxHeight()
+                                            .padding(horizontal = 16.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        AddPageFullScreenItem(onClick = onAddAnotherScan)
+                                    }
                                 }
                             }
                         }
                     }
                 }
 
-                // La barra de botones AHORA ESTÁ AQUÍ, dentro del Box de la vista normal
                 Surface(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
@@ -321,10 +358,8 @@ fun FinalReviewScreen(
                     }
                 }
             }
-            // --- FIN DEL CAMBIO ---
         }
 
-        // El ShareBottomSheet se queda aquí fuera, porque es un modal que se superpone a todo
         if (showShareSheet) {
             ShareBottomSheet(
                 onDismiss = { showShareSheet = false },
@@ -531,7 +566,7 @@ private fun MarkupScreen(
     val imageBitmap = remember(bitmap) { bitmap.asImageBitmap() }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        Canvas(modifier = Modifier
+        androidx.compose.foundation.Canvas(modifier = Modifier
             .fillMaxSize()
             .padding(horizontal = 56.dp, vertical = 130.dp)
             .pointerInput(Unit) {
@@ -661,7 +696,7 @@ private fun captureBitmap(
     content: DrawScope.() -> Unit
 ): Bitmap {
     val imageBitmap = ImageBitmap(width, height)
-    val canvas = Canvas(imageBitmap)
+    val canvas = androidx.compose.ui.graphics.Canvas(imageBitmap)
     val drawScope = CanvasDrawScope()
     drawScope.draw(
         density = androidx.compose.ui.unit.Density(1f),
@@ -861,6 +896,35 @@ private fun AddPageGridItem(onClick: () -> Unit, modifier: Modifier = Modifier) 
     }
 }
 
+@Composable
+private fun AddPageFullScreenItem(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(200.dp) // <-- CAMBIO: Altura reducida
+            .clip(CircleShape.copy(all = CornerSize(8.dp)))
+            .background(Color.DarkGray)
+            .border(
+                2.dp,
+                Color(0xFF444444),
+                shape = CircleShape.copy(all = CornerSize(8.dp))
+            )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(
+                imageVector = Icons.Default.Add,
+                contentDescription = "Añadir Página",
+                tint = Color.Gray,
+                modifier = Modifier.size(48.dp)
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text("Añadir Página", color = Color.Gray, fontSize = 16.sp)
+        }
+    }
+}
+
 private fun createZipFromBitmapsAndGetUri(context: Context, bitmaps: List<Bitmap>, fileName: String = "documento.zip"): Uri? {
     if (bitmaps.isEmpty()) return null
 
@@ -910,3 +974,4 @@ private object AppPreferences {
         }
     }
 }
+
