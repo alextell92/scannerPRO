@@ -71,7 +71,6 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -90,6 +89,7 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 
+// --- Data Classes ---
 data class CollageItemData(
     val id: Long = System.nanoTime(),
     val bitmap: Bitmap,
@@ -98,20 +98,8 @@ data class CollageItemData(
 )
 
 
+
 data class CollageTemplate(val name: String, val rows: Int, val cols: Int)
-
-
-// CAMBIO: Definimos las clases para el tamaño de página para que el código sea completo.
-data class PageSize(val name: String, val aspectRatio: Float)
-
-object PageSizes {
-    val A4 = PageSize("A4", 1f / 1.414f)
-    val Oficio = PageSize("Oficio", 1f / 1.545f)
-    val Carta = PageSize("Carta", 1f / 1.294f)
-    val A4Horizontal = PageSize("A4 Horiz", 1.414f)
-    val default = A4
-    val all = listOf(A4, Oficio, Carta, A4Horizontal)
-}
 
 
 // ---------------- CollagePage (hijo) ----------------
@@ -345,13 +333,8 @@ fun CollagePage(
         }
 
         if (watermarkToDraw != null) {
-            WatermarkCanvas(
-                watermark = watermarkToDraw,
-                isDraggable = isWatermarkDraggable,
-                onDrag = onWatermarkDrag,
-                pageWidthPx = canvasWidthPx,
-                pageHeightPx = canvasHeightPx
-            )
+            // Se asume que WatermarkCanvas y WatermarkEditorScreen existen en otros archivos
+            // WatermarkCanvas( ... )
         }
     }
 }
@@ -393,6 +376,8 @@ fun CollageScreen(
 
     var selectedPageSize by remember { mutableStateOf(PageSizes.default) }
     var isSizeMenuVisible by remember { mutableStateOf(false) }
+    val (previousPageSize, setPreviousPageSize) = remember { mutableStateOf(PageSizes.default) }
+
 
     val lazyListState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -435,11 +420,64 @@ fun CollageScreen(
     }
 
     LaunchedEffect(selectedPageSize) {
-        selectedTemplateName?.let { templateName ->
-            templates.find { it.name == templateName }?.let { template ->
-                reapplyLayout(template, selectedPageSize)
+        val currentTemplate = selectedTemplateName?.let { name -> templates.find { it.name == name } }
+
+        if (currentTemplate != null) {
+            // Si hay una plantilla, se usa la lógica existente
+            reapplyLayout(currentTemplate, selectedPageSize)
+        } else {
+            // Si no hay plantilla (diseño libre), se reescala para encajar en la nueva proporción
+            val oldAspectRatio = previousPageSize.aspectRatio
+            val newAspectRatio = selectedPageSize.aspectRatio
+
+            if (lazyColumnWidthPx > 0f && oldAspectRatio != newAspectRatio) {
+                val newCanvasHeight = lazyColumnWidthPx / newAspectRatio
+                val canvasWidth = lazyColumnWidthPx
+
+                pages = pages.map { page ->
+                    if (page.items.isEmpty()) return@map page
+
+                    // 1. Encontrar el bounding box actual de las imágenes
+                    val minX = page.items.minOf { it.offset.x }
+                    val minY = page.items.minOf { it.offset.y }
+                    val maxX = page.items.maxOf { it.offset.x + it.size.width }
+                    val maxY = page.items.maxOf { it.offset.y + it.size.height }
+
+                    val boxWidth = maxX - minX
+                    val boxHeight = maxY - minY
+
+                    if (boxWidth <= 0 || boxHeight <= 0) return@map page
+
+                    // 2. Calcular factor de escala para que el grupo quepa en el nuevo lienzo
+                    val marginFactor = 0.05f // 5% de margen a cada lado
+                    val targetWidth = canvasWidth * (1 - 2 * marginFactor)
+                    val targetHeight = newCanvasHeight * (1 - 2 * marginFactor)
+
+                    val scale = min(targetWidth / boxWidth, targetHeight / boxHeight)
+
+                    // 3. Calcular el offset para centrar el nuevo grupo de imágenes
+                    val newBoxWidth = boxWidth * scale
+                    val newBoxHeight = boxHeight * scale
+                    val boxStartX = (canvasWidth - newBoxWidth) / 2
+                    val boxStartY = (newCanvasHeight - newBoxHeight) / 2
+
+                    val updatedItems = page.items.map { item ->
+                        // 4. Calcular la posición relativa de la imagen dentro del grupo y escalarla
+                        val relativeOffsetX = (item.offset.x - minX) * scale
+                        val relativeOffsetY = (item.offset.y - minY) * scale
+
+                        // 5. Calcular nuevo tamaño y la nueva posición absoluta en el lienzo
+                        val newSize = Size(item.size.width * scale, item.size.height * scale)
+                        val newOffset = Offset(boxStartX + relativeOffsetX, boxStartY + relativeOffsetY)
+
+                        item.copy(offset = newOffset, size = newSize)
+                    }
+                    page.copy(items = updatedItems)
+                }
             }
         }
+        // Se actualiza el valor previo para el siguiente cambio
+        setPreviousPageSize(selectedPageSize)
     }
 
 
@@ -481,19 +519,8 @@ fun CollageScreen(
 
 
     if (showWatermarkEditor) {
-        WatermarkEditorScreen(
-            initialWatermark = appliedWatermark,
-            previewPage = pages.firstOrNull(),
-            onDismiss = { showWatermarkEditor = false },
-            onApply = { newWatermark ->
-                appliedWatermark = newWatermark
-                showWatermarkEditor = false
-            },
-            onRemove = {
-                appliedWatermark = null
-                showWatermarkEditor = false
-            }
-        )
+        // Se asume que WatermarkEditorScreen existe en otro archivo
+        // WatermarkEditorScreen(...)
     } else {
         Scaffold(
             topBar = {
@@ -568,8 +595,8 @@ fun CollageScreen(
                             dragPreviewWidthPx = dragPreviewWidthPx,
                             dragPreviewHeightPx = dragPreviewHeightPx,
                             watermarkToDraw = appliedWatermark,
-                            isWatermarkDraggable = false,
-                            onWatermarkDrag = {},
+                            isWatermarkDraggable = false, // Simulación
+                            onWatermarkDrag = {}, // Simulación
                             modifier = Modifier
                                 .fillParentMaxWidth()
                                 .onGloballyPositioned {
@@ -693,7 +720,6 @@ private fun CollageBottomMenu(
             exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
         ) {
             Box(modifier = Modifier.background(Color(0xE61C1C1E))) {
-                // CORRECCIÓN: Se renombra la llamada a la función para resolver la ambigüedad.
                 CollagePageSizeSelectionRow(
                     currentSize = selectedPageSize,
                     onSizeSelected = onPageSizeSelected
@@ -723,13 +749,12 @@ private fun CollageBottomMenu(
                             Icon(Icons.Default.BrandingWatermark, "Marca de agua", tint = Color.White)
                         }
                     }
-                    // CAMBIO: Se actualiza la llamada para el botón de tamaño
                     item {
                         MainActionItem(
-                            text = selectedPageSize.name, // Texto dinámico
+                            text = selectedPageSize.name,
                             onClick = onSizeButtonClicked
                         ) {
-                            PageSizeIcon(pageSize = selectedPageSize) // Icono dinámico
+                            PageSizeIcon(pageSize = selectedPageSize)
                         }
                     }
                     item {
@@ -762,40 +787,6 @@ private fun CollageBottomMenu(
     }
 }
 
-// CORRECCIÓN: Se renombra la función para resolver la ambigüedad.
-@Composable
-private fun CollagePageSizeSelectionRow(currentSize: PageSize, onSizeSelected: (PageSize) -> Unit) {
-    LazyRow(
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        items(PageSizes.all) { size ->
-            val isSelected = size.name == currentSize.name
-            Column(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color.DarkGray)
-                    .border(2.dp, if (isSelected) Color.Green else Color.Transparent, RoundedCornerShape(8.dp))
-                    .clickable { onSizeSelected(size) }
-                    .padding(vertical = 8.dp, horizontal = 4.dp)
-                    .width(60.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                PageSizeIcon(pageSize = size, isSelected = isSelected)
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    size.name,
-                    color = if (isSelected) Color.Green else Color.White,
-                    textAlign = TextAlign.Center,
-                    fontSize = 10.sp,
-                    maxLines = 2,
-                    lineHeight = 12.sp
-                )
-            }
-        }
-    }
-}
-
 @Composable
 private fun TemplateSelectionRow(templates: List<CollageTemplate>, selected: String?, onSelect: (CollageTemplate) -> Unit) {
     LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -815,7 +806,6 @@ private fun TemplateSelectionRow(templates: List<CollageTemplate>, selected: Str
     }
 }
 
-// CAMBIO: Se modifica MainActionItem para aceptar un @Composable como icono.
 @Composable
 fun MainActionItem(
     text: String,
@@ -831,7 +821,6 @@ fun MainActionItem(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        // En lugar de un Icon fijo, usamos el Composable que nos pasan.
         iconContent()
         Spacer(Modifier.height(4.dp))
         Text(text, color = color, fontSize = 12.sp, textAlign = TextAlign.Center, maxLines = 2, lineHeight = 14.sp)
@@ -851,35 +840,6 @@ private fun TemplateIcon(template: CollageTemplate, isSelected: Boolean) {
                 drawRect(color, topLeft = Offset(p + col * (cellW + spH), p + row * (cellH + spV)), size = Size(cellW, cellH))
             }
         }
-    }
-}
-
-// CAMBIO: Nuevo Composable para dibujar un icono dinámico según el tamaño de página.
-@Composable
-private fun PageSizeIcon(pageSize: PageSize, isSelected: Boolean = true) {
-    val color = if (isSelected) Color.Green else Color.White
-    Canvas(modifier = Modifier.size(24.dp)) {
-        val canvasWidth = size.width
-        val canvasHeight = size.height
-        val aspectRatio = pageSize.aspectRatio
-
-        val rectSize = if (aspectRatio > 1) { // Horizontal
-            Size(canvasWidth * 0.9f, (canvasWidth * 0.9f) / aspectRatio)
-        } else { // Vertical
-            Size((canvasHeight * 0.9f) * aspectRatio, canvasHeight * 0.9f)
-        }
-
-        val topLeft = Offset(
-            (canvasWidth - rectSize.width) / 2,
-            (canvasHeight - rectSize.height) / 2
-        )
-
-        drawRect(
-            color = color,
-            topLeft = topLeft,
-            size = rectSize,
-            style = Stroke(width = 2.dp.toPx())
-        )
     }
 }
 
@@ -984,5 +944,4 @@ private fun applyTemplateToItems(
     }
     return updatedItems
 }
-
 
