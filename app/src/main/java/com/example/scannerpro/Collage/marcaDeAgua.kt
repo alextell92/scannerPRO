@@ -375,12 +375,15 @@ fun WatermarkEditorScreen(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
                     horizontalArrangement = Arrangement.SpaceEvenly
                 ) {
-                    MainActionItem("Editar Texto", Icons.Default.Edit, onClick = { showTextDialog = true })
-                    MainActionItem("Ajustar Estilo", Icons.Default.Style, onClick = { showStyleEditor = !showStyleEditor })
-                    MainActionItem("Eliminar", Icons.Default.Delete, onClick = {
-                        onRemove()
-                        onDismiss()
-                    })
+                    MainActionItem(text = "Editar Texto", onClick = { showTextDialog = true }) {
+                        Icon(Icons.Default.Edit, "Editar Texto", tint = Color.White)
+                    }
+                    MainActionItem(text = "Ajustar Estilo", onClick = { showStyleEditor = !showStyleEditor }) {
+                        Icon(Icons.Default.Style, "Ajustar Estilo", tint = Color.White)
+                    }
+                    MainActionItem(text = "Eliminar", onClick = { onRemove(); onDismiss() }) {
+                        Icon(Icons.Default.Delete, "Eliminar", tint = Color.White)
+                    }
                 }
             }
         },
@@ -405,13 +408,13 @@ fun WatermarkEditorScreen(
                             dragPreviewWidthPx = 0f, dragPreviewHeightPx = 0f, watermarkToDraw = watermark,
                             isWatermarkDraggable = true,onWatermarkDrag = { newCenter ->
                                 watermark = watermark.copy(offset = newCenter)
-
-
-                    },
+                            },
                             onItemRemoved = {}, onStartDrag = { _, _, _, _, _, _, _, _ -> }, onDragMove = {}, onDrop = {},
                             onPositioned = { _, _ -> }, onInitialLayoutComputed = { _, _ -> },
                             currentTargetPageIndex = null, dragPreviewOffsetInTarget = null,
-                            isInteractive = false
+                            isInteractive = false,
+                            // --- INICIO DE LA CORRECCIÓN ---
+
                         )
                     }
                 } else {
@@ -518,7 +521,3 @@ private fun WatermarkStyleEditor(watermark: WatermarkData, onUpdate: (WatermarkD
         }
     }
 }
-
-// Dummy MainActionItem for compilation
-
-
