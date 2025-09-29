@@ -42,7 +42,7 @@ object PageSizes {
     val A4Horizontal = PageSize("A4 Horiz", 1.414f)
     val default = A4
     // CAMBIO: Se agregan los nuevos tamaños a la lista para que aparezcan en la UI
-    val all = listOf(A3, A4, A5, B4, B5, Oficio, Carta, A4Horizontal)
+    val all = listOf(Carta,A3, A4, A5, B4, B5, Oficio, A4Horizontal)
 }
 
 @Composable

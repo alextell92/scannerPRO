@@ -507,18 +507,19 @@ private fun WatermarkStyleEditor(watermark: WatermarkData, onUpdate: (WatermarkD
                             .clickable { onUpdate(watermark.copy(color = color)) })
                 }
             }
-            Text("Tamaño: ${watermark.size.roundToInt()}sp", color = Color.White)
-            Slider(value = watermark.size, onValueChange = { onUpdate(watermark.copy(size = it)) }, valueRange = 12f..96f)
-            Text("Opacidad: ${(watermark.opacity * 100).roundToInt()}%", color = Color.White)
-            Slider(value = watermark.opacity, onValueChange = { onUpdate(watermark.copy(opacity = it)) }, valueRange = 0.1f..1f)
-            Text("Rotación: ${watermark.rotation.roundToInt()}°", color = Color.White)
-            Slider(value = watermark.rotation, onValueChange = { onUpdate(watermark.copy(rotation = it)) }, valueRange = -180f..180f)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Patrón", color = Color.White); Spacer(Modifier.width(8.dp))
                 Switch(checked = watermark.isPattern, onCheckedChange = {
                     val newRotation = if (it) -55f else 0f
                     onUpdate(watermark.copy(isPattern = it, offset = Offset.Zero, rotation = newRotation))
                 })
+            Text("Tamaño: ${watermark.size.roundToInt()}sp", color = Color.White)
+            Slider(value = watermark.size, onValueChange = { onUpdate(watermark.copy(size = it)) }, valueRange = 12f..96f)
+            Text("Opacidad: ${(watermark.opacity * 100).roundToInt()}%", color = Color.White)
+            Slider(value = watermark.opacity, onValueChange = { onUpdate(watermark.copy(opacity = it)) }, valueRange = 0.1f..1f)
+            Text("Rotación: ${watermark.rotation.roundToInt()}°", color = Color.White)
+            Slider(value = watermark.rotation, onValueChange = { onUpdate(watermark.copy(rotation = it)) }, valueRange = -180f..180f)
+
             }
         }
     }
