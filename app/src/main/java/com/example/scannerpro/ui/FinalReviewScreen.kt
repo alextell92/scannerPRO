@@ -107,6 +107,7 @@ private enum class ViewMode { LIST, GRID }
 @Composable
 fun FinalReviewScreen(
     initialBitmaps: List<Bitmap>,
+    repository: DocumentRepository, // <-- AÑADE ESTE PARÁMETRO
     onEditRequest: (Int) -> Unit,
     onAddAnotherScan: () -> Unit,
     onFinish: () -> Unit
@@ -146,9 +147,10 @@ fun FinalReviewScreen(
         } else if (isCollageMode) {
             CollageScreen(
                 initialBitmaps = bitmapsForCollage,
+                repository = repository, // <-- PARÁMETRO QUE FALTA
                 onClose = { isCollageMode = false },
                 onSave = { pages ->
-                    Toast.makeText(context, "Guardado: ${pages.size} páginas, ${pages.sumOf { it.items.size }} imágenes", Toast.LENGTH_SHORT).show()
+                    // Ya no necesitas el Toast aquí, el guardado se maneja dentro
                     isCollageMode = false
                 }
             )

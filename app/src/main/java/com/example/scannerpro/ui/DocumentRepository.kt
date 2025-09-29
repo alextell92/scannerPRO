@@ -290,5 +290,9 @@ class DocumentRepository(private val context: Context, private val documentDao: 
         }
     }
 
+    suspend fun insertDocument(document: Document): Long {
+        return documentDao.insertDocument(document)
+    }
+
 }
 

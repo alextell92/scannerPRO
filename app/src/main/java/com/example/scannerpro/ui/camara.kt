@@ -312,6 +312,8 @@ fun DocumentScannerScreen(
             ScannerFlowState.FINAL_REVIEW -> {
                 FinalReviewScreen(
                     initialBitmaps = scannedBitmaps,
+
+                    repository = documentRepository,
                     onAddAnotherScan = { resetToCameraState() },
                     onEditRequest = { index ->
                         val bitmapToEdit = scannedBitmaps[index]

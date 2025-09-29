@@ -1,6 +1,10 @@
 package com.example.scannerpro.Collage
 
+import DocumentRepository
+import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Canvas as AndroidCanvas
+import android.graphics.Paint
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -45,13 +49,17 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.NoteAdd
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -70,9 +78,11 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Density
@@ -83,6 +93,9 @@ import androidx.compose.ui.zIndex
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.math.min
 import kotlin.math.roundToInt
 
@@ -94,6 +107,7 @@ data class CollageItemData(
     val offset: Offset = Offset.Zero,
     val size: Size = Size.Zero
 )
+
 
 
 data class CollageTemplate(val name: String, val rows: Int, val cols: Int)
@@ -142,7 +156,6 @@ fun CollagePage(
         val canvasHeightPx = constraints.maxHeight.toFloat()
         val density = LocalDensity.current
 
-        // Efecto para centrar imágenes nuevas (cuando su offset es Zero)
         LaunchedEffect(pageData.items, canvasWidthPx, canvasHeightPx) {
             val itemsToCenter = pageData.items.filter { it.offset == Offset.Zero }
 
@@ -291,6 +304,7 @@ fun CollagePage(
 @Composable
 fun CollageScreen(
     initialBitmaps: List<Bitmap>,
+    repository: DocumentRepository,
     onClose: () -> Unit,
     onSave: (List<CollagePageData>) -> Unit
 ) {
@@ -316,6 +330,10 @@ fun CollageScreen(
     var showDeleteDialog by remember { mutableStateOf(false) }
     var pageIndexToDelete by remember { mutableStateOf<Int?>(null) }
     var showExitDialog by remember { mutableStateOf(false) }
+    var showSaveDialog by remember { mutableStateOf(false) }
+    var isSaving by remember { mutableStateOf(false) }
+    var documentName by remember { mutableStateOf("") }
+
 
     var isTemplateMenuVisible by remember { mutableStateOf(false) }
     var selectedTemplateName by remember { mutableStateOf<String?>(null) }
@@ -326,9 +344,9 @@ fun CollageScreen(
     var isSizeMenuVisible by remember { mutableStateOf(false) }
     val (previousPageSize, setPreviousPageSize) = remember { mutableStateOf(PageSizes.default) }
 
-
     val lazyListState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     var listLayoutCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
     val pageCoords = remember { mutableStateMapOf<Int, LayoutCoordinates>() }
 
@@ -354,8 +372,7 @@ fun CollageScreen(
         if (allItems.isEmpty()) return
 
         val itemsPerPage = when (template.name) {
-            "Pasaporte" -> 1
-            "Licencia", "ID Card" -> 2
+            "Pasaporte" -> 1; "Licencia", "ID Card" -> 2
             else -> template.rows * template.cols
         }
 
@@ -383,34 +400,21 @@ fun CollageScreen(
                 pages = pages.map { page ->
                     if (page.items.isEmpty()) return@map page
 
-                    val minX = page.items.minOf { it.offset.x }
-                    val minY = page.items.minOf { it.offset.y }
-                    val maxX = page.items.maxOf { it.offset.x + it.size.width }
-                    val maxY = page.items.maxOf { it.offset.y + it.size.height }
-
-                    val boxWidth = maxX - minX
-                    val boxHeight = maxY - minY
-
+                    val minX = page.items.minOf { it.offset.x }; val minY = page.items.minOf { it.offset.y }
+                    val maxX = page.items.maxOf { it.offset.x + it.size.width }; val maxY = page.items.maxOf { it.offset.y + it.size.height }
+                    val boxWidth = maxX - minX; val boxHeight = maxY - minY
                     if (boxWidth <= 0 || boxHeight <= 0) return@map page
 
                     val marginFactor = 0.05f
-                    val targetWidth = canvasWidth * (1 - 2 * marginFactor)
-                    val targetHeight = newCanvasHeight * (1 - 2 * marginFactor)
-
+                    val targetWidth = canvasWidth * (1 - 2 * marginFactor); val targetHeight = newCanvasHeight * (1 - 2 * marginFactor)
                     val scale = min(targetWidth / boxWidth, targetHeight / boxHeight)
-
-                    val newBoxWidth = boxWidth * scale
-                    val newBoxHeight = boxHeight * scale
-                    val boxStartX = (canvasWidth - newBoxWidth) / 2
-                    val boxStartY = (newCanvasHeight - newBoxHeight) / 2
+                    val newBoxWidth = boxWidth * scale; val newBoxHeight = boxHeight * scale
+                    val boxStartX = (canvasWidth - newBoxWidth) / 2; val boxStartY = (newCanvasHeight - newBoxHeight) / 2
 
                     val updatedItems = page.items.map { item ->
-                        val relativeOffsetX = (item.offset.x - minX) * scale
-                        val relativeOffsetY = (item.offset.y - minY) * scale
-
+                        val relativeOffsetX = (item.offset.x - minX) * scale; val relativeOffsetY = (item.offset.y - minY) * scale
                         val newSize = Size(item.size.width * scale, item.size.height * scale)
                         val newOffset = Offset(boxStartX + relativeOffsetX, boxStartY + relativeOffsetY)
-
                         item.copy(offset = newOffset, size = newSize)
                     }
                     page.copy(items = updatedItems)
@@ -443,41 +447,43 @@ fun CollageScreen(
         DeleteConfirmationDialog(
             onConfirm = {
                 pageIndexToDelete?.let { index ->
-                    if (pages.size > 1) {
-                        pages = pages.filterIndexed { i, _ -> i != index }
-                    }
+                    if (pages.size > 1) pages = pages.filterIndexed { i, _ -> i != index }
                 }
-                showDeleteDialog = false
-                pageIndexToDelete = null
+                showDeleteDialog = false; pageIndexToDelete = null
             },
-            onDismiss = {
-                showDeleteDialog = false
-                pageIndexToDelete = null
-            }
+            onDismiss = { showDeleteDialog = false; pageIndexToDelete = null }
         )
     }
 
     if (showExitDialog) {
-        ExitConfirmationDialog(
-            onConfirm = onClose,
-            onDismiss = { showExitDialog = false }
-        )
+        ExitConfirmationDialog(onConfirm = onClose, onDismiss = { showExitDialog = false })
     }
 
+    if (showSaveDialog) {
+        SaveCollageDialog(
+            initialName = documentName,
+            isSaving = isSaving,
+            onConfirm = { finalName ->
+                scope.launch {
+                    isSaving = true
+                    // CAMBIO: Llama a la función desde el objeto CollageSaver
+                    CollageSaver.handleSaveCollage(context, repository, finalName, pages, appliedWatermark, selectedPageSize, lazyColumnWidthPx, density)
+                    isSaving = false
+                    showSaveDialog = false
+                    onClose() // Cierra la pantalla de collage después de guardar
+                }
+            },
+            onDismiss = { showSaveDialog = false }
+        )
+    }
 
     if (showWatermarkEditor) {
         WatermarkEditorScreen(
             initialWatermark = appliedWatermark,
             previewPage = pages.firstOrNull(),
             onDismiss = { showWatermarkEditor = false },
-            onApply = { newWatermark ->
-                appliedWatermark = newWatermark
-                showWatermarkEditor = false
-            },
-            onRemove = {
-                appliedWatermark = null
-                showWatermarkEditor = false
-            }
+            onApply = { newWatermark -> appliedWatermark = newWatermark; showWatermarkEditor = false },
+            onRemove = { appliedWatermark = null; showWatermarkEditor = false }
         )
     } else {
         Scaffold(
@@ -500,36 +506,22 @@ fun CollageScreen(
                     selectedTemplateName = selectedTemplateName,
                     isSizeMenuVisible = isSizeMenuVisible,
                     selectedPageSize = selectedPageSize,
-                    onTemplateButtonClicked = {
-                        isSizeMenuVisible = false
-                        isTemplateMenuVisible = !isTemplateMenuVisible
-                    },
-                    onSizeButtonClicked = {
-                        isTemplateMenuVisible = false
-                        isSizeMenuVisible = !isSizeMenuVisible
-                    },
-                    onWatermarkClicked = {
-                        isTemplateMenuVisible = false
-                        isSizeMenuVisible = false
-                        showWatermarkEditor = true
-                    },
-                    onTemplateSelected = { template ->
-                        selectedTemplateName = template.name
-                        reapplyLayout(template, selectedPageSize)
-                    },
-                    onPageSizeSelected = { newSize ->
-                        selectedPageSize = newSize
-                    },
+                    onTemplateButtonClicked = { isSizeMenuVisible = false; isTemplateMenuVisible = !isTemplateMenuVisible },
+                    onSizeButtonClicked = { isTemplateMenuVisible = false; isSizeMenuVisible = !isSizeMenuVisible },
+                    onWatermarkClicked = { isTemplateMenuVisible = false; isSizeMenuVisible = false; showWatermarkEditor = true },
+                    onTemplateSelected = { template -> selectedTemplateName = template.name; reapplyLayout(template, selectedPageSize) },
+                    onPageSizeSelected = { newSize -> selectedPageSize = newSize },
                     onAddPage = {
                         pages = pages + CollagePageData(items = emptyList())
                         scope.launch { lazyListState.animateScrollToItem(pages.lastIndex) }
                     },
-                    onDeletePage = {
-                        pageIndexToDelete = lazyListState.firstVisibleItemIndex
-                        showDeleteDialog = true
-                    },
+                    onDeletePage = { pageIndexToDelete = lazyListState.firstVisibleItemIndex; showDeleteDialog = true },
                     isDeleteEnabled = pages.size > 1,
-                    onSave = { onSave(pages) }
+                    onSave = {
+                        val timestamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.getDefault()).format(Date())
+                        documentName = "Collage_$timestamp"
+                        showSaveDialog = true
+                    }
                 )
             },
             containerColor = Color.DarkGray
@@ -546,26 +538,16 @@ fun CollageScreen(
                     items(count = pages.size, key = { pages[it].id }) { pageIndex ->
                         val page = pages[pageIndex]
                         CollagePage(
-                            pageIndex = pageIndex,
-                            pageData = page,
-                            draggingItemId = draggingItemId,
-                            isDragging = isDragging,
-                            dragPreviewWidthPx = dragPreviewWidthPx,
-                            dragPreviewHeightPx = dragPreviewHeightPx,
-                            watermarkToDraw = appliedWatermark,
-                            isWatermarkDraggable = false,
-                            onWatermarkDrag = {},
+                            pageIndex = pageIndex, pageData = page, draggingItemId = draggingItemId, isDragging = isDragging,
+                            dragPreviewWidthPx = dragPreviewWidthPx, dragPreviewHeightPx = dragPreviewHeightPx,
+                            watermarkToDraw = appliedWatermark, isWatermarkDraggable = false, onWatermarkDrag = {},
                             modifier = Modifier
                                 .fillParentMaxWidth()
                                 .onGloballyPositioned {
-                                    if (lazyColumnWidthPx == 0f) {
-                                        lazyColumnWidthPx = it.size.width.toFloat()
-                                    }
+                                    if (lazyColumnWidthPx == 0f) lazyColumnWidthPx = it.size.width.toFloat()
                                 }
                                 .aspectRatio(selectedPageSize.aspectRatio),
-                            onItemRemoved = { itemIdToRemove ->
-                                pages = pages.map { p -> p.copy(items = p.items.filterNot { it.id == itemIdToRemove }) }
-                            },
+                            onItemRemoved = { itemIdToRemove -> pages = pages.map { p -> p.copy(items = p.items.filterNot { it.id == itemIdToRemove }) } },
                             onStartDrag = { itemId, bmp, pos, pageIdx, w, h, touch, wasSelected ->
                                 draggingItemId = itemId; dragPreviewBitmap = bmp; isDragging = true; dragPointerPosition = pos
                                 sourcePageIndexForDrag = pageIdx; dragTouchOffsetInsideImage = touch
@@ -581,14 +563,10 @@ fun CollageScreen(
                                 }?.key
                             },
                             onDrop = {
-                                val itemId = draggingItemId ?: return@CollagePage
-                                val bmp = dragPreviewBitmap ?: return@CollagePage
+                                val itemId = draggingItemId ?: return@CollagePage; val bmp = dragPreviewBitmap ?: return@CollagePage
                                 val targetIdx = currentTargetPageIndex ?: sourcePageIndexForDrag ?: return@CollagePage
                                 val targetCoords = pageCoords[targetIdx]
-                                if (targetCoords == null || !targetCoords.isAttached) {
-                                    isDragging = false
-                                    return@CollagePage
-                                }
+                                if (targetCoords == null || !targetCoords.isAttached) { isDragging = false; return@CollagePage }
                                 val localPos = targetCoords.windowToLocal(dragPointerPosition)
                                 val newOffset = localPos - dragTouchOffsetInsideImage
                                 val finalItem = CollageItemData(itemId, bmp, newOffset, Size(dragPreviewWidthPx, dragPreviewHeightPx))
@@ -611,15 +589,7 @@ fun CollageScreen(
                             } else null
                         )
                     }
-                    item {
-                        AddPageCanvas(
-                            onClick = {
-                                pages = pages + CollagePageData(items = emptyList())
-                                scope.launch { lazyListState.animateScrollToItem(pages.lastIndex) }
-                            },
-                            modifier = Modifier.fillParentMaxWidth().height(150.dp)
-                        )
-                    }
+                    item { AddPageCanvas(onClick = { pages = pages + CollagePageData(items = emptyList()); scope.launch { lazyListState.animateScrollToItem(pages.lastIndex) } }, modifier = Modifier.fillParentMaxWidth().height(150.dp)) }
                 }
 
                 if (isDragging && dragPreviewBitmap != null) {
@@ -627,16 +597,7 @@ fun CollageScreen(
                     val left = with(density) { (dragPointerPosition.x - containerBasePos.x - dragTouchOffsetInsideImage.x).toDp() }
                     val top = with(density) { (dragPointerPosition.y - containerBasePos.y - dragTouchOffsetInsideImage.y).toDp() }
                     val width = with(density) { dragPreviewWidthPx.toDp() }
-
-                    Image(
-                        bitmap = dragPreviewBitmap!!.asImageBitmap(),
-                        contentDescription = "Arrastrando item",
-                        modifier = Modifier.offset(x = left, y = top).width(width)
-                            .aspectRatio(dragPreviewWidthPx / dragPreviewHeightPx.coerceAtLeast(1f))
-                            .shadow(12.dp, RoundedCornerShape(4.dp))
-                            .border(width = if (dragPreviewShowBorder) 3.dp else 1.dp, color = if (dragPreviewShowBorder) Color.Green else Color.Black.copy(alpha = 0.5f))
-                            .zIndex(10f)
-                    )
+                    Image(bitmap = dragPreviewBitmap!!.asImageBitmap(), contentDescription = "Arrastrando item", modifier = Modifier.offset(x = left, y = top).width(width).aspectRatio(dragPreviewWidthPx / dragPreviewHeightPx.coerceAtLeast(1f)).shadow(12.dp, RoundedCornerShape(4.dp)).border(width = if (dragPreviewShowBorder) 3.dp else 1.dp, color = if (dragPreviewShowBorder) Color.Green else Color.Black.copy(alpha = 0.5f)).zIndex(10f))
                 }
                 Box(modifier = Modifier.fillMaxSize().onGloballyPositioned { dragContainerCoords = it })
             }
@@ -645,101 +606,21 @@ fun CollageScreen(
 }
 
 @Composable
-private fun CollageBottomMenu(
-    templates: List<CollageTemplate>,
-    isTemplateMenuVisible: Boolean,
-    selectedTemplateName: String?,
-    isSizeMenuVisible: Boolean,
-    selectedPageSize: PageSize,
-    onTemplateButtonClicked: () -> Unit,
-    onSizeButtonClicked: () -> Unit,
-    onWatermarkClicked: () -> Unit,
-    onTemplateSelected: (CollageTemplate) -> Unit,
-    onPageSizeSelected: (PageSize) -> Unit,
-    onAddPage: () -> Unit,
-    onDeletePage: () -> Unit,
-    isDeleteEnabled: Boolean,
-    onSave: () -> Unit
-) {
+private fun CollageBottomMenu(templates: List<CollageTemplate>, isTemplateMenuVisible: Boolean, selectedTemplateName: String?, isSizeMenuVisible: Boolean, selectedPageSize: PageSize, onTemplateButtonClicked: () -> Unit, onSizeButtonClicked: () -> Unit, onWatermarkClicked: () -> Unit, onTemplateSelected: (CollageTemplate) -> Unit, onPageSizeSelected: (PageSize) -> Unit, onAddPage: () -> Unit, onDeletePage: () -> Unit, isDeleteEnabled: Boolean, onSave: () -> Unit) {
     Column {
-        AnimatedVisibility(
-            visible = isTemplateMenuVisible,
-            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
-            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
-        ) {
-            Box(modifier = Modifier.background(Color(0xE61C1C1E))) {
-                TemplateSelectionRow(templates, selectedTemplateName, onTemplateSelected)
-            }
-        }
-
-        AnimatedVisibility(
-            visible = isSizeMenuVisible,
-            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
-            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
-        ) {
-            Box(modifier = Modifier.background(Color(0xE61C1C1E))) {
-                CollagePageSizeSelectionRow(
-                    currentSize = selectedPageSize,
-                    onSizeSelected = onPageSizeSelected
-                )
-            }
-        }
-
+        AnimatedVisibility(visible = isTemplateMenuVisible, enter = slideInVertically(initialOffsetY = { it }) + fadeIn(), exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()) { Box(modifier = Modifier.background(Color(0xE61C1C1E))) { TemplateSelectionRow(templates, selectedTemplateName, onTemplateSelected) } }
+        AnimatedVisibility(visible = isSizeMenuVisible, enter = slideInVertically(initialOffsetY = { it }) + fadeIn(), exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()) { Box(modifier = Modifier.background(Color(0xE61C1C1E))) { CollagePageSizeSelectionRow(currentSize = selectedPageSize, onSizeSelected = onPageSizeSelected) } }
         Surface(color = Color(0xFF2C2C2E), contentColor = Color.White) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 8.dp, horizontal = 12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                LazyRow(
-                    modifier = Modifier.weight(1f),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    item {
-                        MainActionItem("Plantilla", onTemplateButtonClicked) {
-                            Icon(Icons.Default.AutoAwesomeMosaic, "Plantilla", tint = Color.White)
-                        }
-                    }
-                    item {
-                        MainActionItem("Marca de agua", onWatermarkClicked) {
-                            Icon(Icons.Default.BrandingWatermark, "Marca de agua", tint = Color.White)
-                        }
-                    }
-                    item {
-                        MainActionItem(
-                            text = selectedPageSize.name,
-                            onClick = onSizeButtonClicked
-                        ) {
-                            PageSizeIcon(pageSize = selectedPageSize)
-                        }
-                    }
-                    item {
-                        MainActionItem("Agregar", onAddPage) {
-                            Icon(Icons.Default.NoteAdd, "Agregar", tint = Color.White)
-                        }
-                    }
-                    item {
-                        MainActionItem("Eliminar", onDeletePage, enabled = isDeleteEnabled) {
-                            val color = if (isDeleteEnabled) Color.White else Color.Gray
-                            Icon(Icons.Default.Delete, "Eliminar", tint = color)
-                        }
-                    }
+            Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp, horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                LazyRow(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    item { MainActionItem("Plantilla", onTemplateButtonClicked) { Icon(Icons.Default.AutoAwesomeMosaic, "Plantilla", tint = Color.White) } }
+                    item { MainActionItem("Marca de agua", onWatermarkClicked) { Icon(Icons.Default.BrandingWatermark, "Marca de agua", tint = Color.White) } }
+                    item { MainActionItem(text = selectedPageSize.name, onClick = onSizeButtonClicked) { PageSizeIcon(pageSize = selectedPageSize) } }
+                    item { MainActionItem("Agregar", onAddPage) { Icon(Icons.Default.NoteAdd, "Agregar", tint = Color.White) } }
+                    item { MainActionItem("Eliminar", onDeletePage, enabled = isDeleteEnabled) { val color = if (isDeleteEnabled) Color.White else Color.Gray; Icon(Icons.Default.Delete, "Eliminar", tint = color) } }
                 }
-
                 Spacer(modifier = Modifier.width(12.dp))
-
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(CircleShape)
-                        .background(Color.Green)
-                        .clickable(onClick = onSave),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(Icons.Default.Check, "Guardar", tint = Color.Black)
-                }
+                Box(modifier = Modifier.size(48.dp).clip(CircleShape).background(Color.Green).clickable(onClick = onSave), contentAlignment = Alignment.Center) { Icon(Icons.Default.Check, "Guardar", tint = Color.Black) }
             }
         }
     }
@@ -750,38 +631,18 @@ private fun TemplateSelectionRow(templates: List<CollageTemplate>, selected: Str
     LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         items(templates) { template ->
             val isSelected = template.name == selected
-            Column(
-                modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(Color.DarkGray)
-                    .border(2.dp, if (isSelected) Color.Green else Color.Transparent, RoundedCornerShape(8.dp))
-                    .clickable { onSelect(template) }.padding(vertical = 8.dp, horizontal = 4.dp).width(60.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                TemplateIcon(template, isSelected)
-                Spacer(Modifier.height(4.dp))
-                Text(template.name, color = if (isSelected) Color.Green else Color.White, textAlign = TextAlign.Center, fontSize = 10.sp, maxLines = 2, lineHeight = 12.sp)
+            Column(modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(Color.DarkGray).border(2.dp, if (isSelected) Color.Green else Color.Transparent, RoundedCornerShape(8.dp)).clickable { onSelect(template) }.padding(vertical = 8.dp, horizontal = 4.dp).width(60.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                TemplateIcon(template, isSelected); Spacer(Modifier.height(4.dp)); Text(template.name, color = if (isSelected) Color.Green else Color.White, textAlign = TextAlign.Center, fontSize = 10.sp, maxLines = 2, lineHeight = 12.sp)
             }
         }
     }
 }
 
 @Composable
-fun MainActionItem(
-    text: String,
-    onClick: () -> Unit,
-    enabled: Boolean = true,
-    iconContent: @Composable () -> Unit
-) {
+fun MainActionItem(text: String, onClick: () -> Unit, enabled: Boolean = true, iconContent: @Composable () -> Unit) {
     val color = if (enabled) Color.White else Color.Gray
-    Column(
-        modifier = Modifier
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 4.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        iconContent()
-        Spacer(Modifier.height(4.dp))
-        Text(text, color = color, fontSize = 12.sp, textAlign = TextAlign.Center, maxLines = 2, lineHeight = 14.sp)
+    Column(modifier = Modifier.clickable(enabled = enabled, onClick = onClick).padding(horizontal = 4.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+        iconContent(); Spacer(Modifier.height(4.dp)); Text(text, color = color, fontSize = 12.sp, textAlign = TextAlign.Center, maxLines = 2, lineHeight = 14.sp)
     }
 }
 
@@ -793,11 +654,7 @@ private fun TemplateIcon(template: CollageTemplate, isSelected: Boolean) {
         val spH = if (template.cols > 1) w * 0.1f else 0f; val spV = if (template.rows > 1) h * 0.1f else 0f
         val cellW = (w - (spH * (template.cols - 1).coerceAtLeast(0))) / template.cols
         val cellH = (h - (spV * (template.rows - 1).coerceAtLeast(0))) / template.rows
-        for (row in 0 until template.rows) {
-            for (col in 0 until template.cols) {
-                drawRect(color, topLeft = Offset(p + col * (cellW + spH), p + row * (cellH + spV)), size = Size(cellW, cellH))
-            }
-        }
+        for (row in 0 until template.rows) for (col in 0 until template.cols) drawRect(color, topLeft = Offset(p + col * (cellW + spH), p + row * (cellH + spV)), size = Size(cellW, cellH))
     }
 }
 
@@ -805,41 +662,44 @@ private fun TemplateIcon(template: CollageTemplate, isSelected: Boolean) {
 fun AddPageCanvas(onClick: () -> Unit, modifier: Modifier = Modifier) {
     Box(modifier.clip(RoundedCornerShape(8.dp)).background(Color.White.copy(alpha = 0.2f)).clickable(onClick = onClick).padding(16.dp), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(Icons.Default.Add, "Añadir Página", tint = Color.White.copy(alpha = 0.8f), modifier = Modifier.size(48.dp))
-            Spacer(Modifier.height(8.dp)); Text("Añadir Página", color = Color.White.copy(alpha = 0.8f))
+            Icon(Icons.Default.Add, "Añadir Página", tint = Color.White.copy(alpha = 0.8f), modifier = Modifier.size(48.dp)); Spacer(Modifier.height(8.dp)); Text("Añadir Página", color = Color.White.copy(alpha = 0.8f))
         }
     }
 }
 
 @Composable
-private fun DeleteConfirmationDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
+private fun SaveCollageDialog(initialName: String, isSaving: Boolean, onConfirm: (String) -> Unit, onDismiss: () -> Unit) {
+    var text by remember { mutableStateOf(initialName) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Confirmar Eliminación") },
-        text = { Text("¿Estás seguro de que quieres eliminar esta página? Esta acción no se puede deshacer.") },
-        confirmButton = { TextButton(onClick = onConfirm) { Text("Eliminar") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } }
+        title = { Text("Guardar Collage") },
+        text = {
+            Column {
+                Text("Introduce un nombre para el nuevo documento.")
+                Spacer(Modifier.height(16.dp))
+                TextField(value = text, onValueChange = { text = it }, label = { Text("Nombre del documento") }, enabled = !isSaving)
+                if (isSaving) {
+                    Spacer(Modifier.height(16.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                        Spacer(Modifier.width(16.dp))
+                        Text("Guardando...")
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { onConfirm(text) }, enabled = !isSaving) { Text("Guardar") } },
+        dismissButton = { TextButton(onClick = onDismiss, enabled = !isSaving) { Text("Cancelar") } }
     )
 }
 
 @Composable
-private fun ExitConfirmationDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Salir sin Guardar") },
-        text = { Text("¿Estás seguro de que quieres salir? Se perderán los cambios no guardados.") },
-        confirmButton = { TextButton(onClick = onConfirm) { Text("Salir") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } }
-    )
-}
+private fun DeleteConfirmationDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) { AlertDialog(onDismissRequest = onDismiss, title = { Text("Confirmar Eliminación") }, text = { Text("¿Estás seguro de que quieres eliminar esta página? Esta acción no se puede deshacer.") }, confirmButton = { TextButton(onClick = onConfirm) { Text("Eliminar") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } }) }
+@Composable
+private fun ExitConfirmationDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) { AlertDialog(onDismissRequest = onDismiss, title = { Text("Salir sin Guardar") }, text = { Text("¿Estás seguro de que quieres salir? Se perderán los cambios no guardados.") }, confirmButton = { TextButton(onClick = onConfirm) { Text("Salir") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } }) }
 
-private fun applyTemplateToItems(
-    items: List<CollageItemData>,
-    template: CollageTemplate,
-    canvasWidth: Float,
-    canvasHeight: Float,
-    density: Density
-): List<CollageItemData> {
+
+private fun applyTemplateToItems(items: List<CollageItemData>, template: CollageTemplate, canvasWidth: Float, canvasHeight: Float, density: Density): List<CollageItemData> {
     if (items.isEmpty() || canvasWidth == 0f || canvasHeight == 0f) return items
     val marginPx = with(density) { 12.dp.toPx() }
     val availableWidth = canvasWidth - (2 * marginPx)
@@ -849,14 +709,10 @@ private fun applyTemplateToItems(
     when (template.name) {
         "Pasaporte" -> {
             val item = items.firstOrNull() ?: return emptyList()
-            val bmpW = item.bitmap.width.toFloat()
-            val bmpH = item.bitmap.height.toFloat()
+            val bmpW = item.bitmap.width.toFloat(); val bmpH = item.bitmap.height.toFloat()
             if (bmpW <= 0f || bmpH <= 0f) return items
-
-            val wScale = availableWidth / bmpW
-            val hScale = availableHeight / bmpH
+            val wScale = availableWidth / bmpW; val hScale = availableHeight / bmpH
             val scale = min(wScale, hScale) * 0.7f
-
             val imageSize = Size(width = bmpW * scale, height = bmpH * scale)
             val offsetX = marginPx + (availableWidth - imageSize.width) / 2
             val offsetY = marginPx + (availableHeight - imageSize.height) / 2
@@ -865,27 +721,15 @@ private fun applyTemplateToItems(
         "Licencia", "ID Card" -> {
             val initialImageMaxWidthPx = availableWidth * 0.8f
             val initialSpacingPx = with(density) { 16.dp.toPx() }
-
-            val initialItemHeights = items.map {
-                val aspect = if (it.bitmap.height > 0) it.bitmap.width.toFloat() / it.bitmap.height.toFloat() else 1f
-                initialImageMaxWidthPx / aspect
-            }
+            val initialItemHeights = items.map { val aspect = if (it.bitmap.height > 0) it.bitmap.width.toFloat() / it.bitmap.height.toFloat() else 1f; initialImageMaxWidthPx / aspect }
             val initialTotalBlockHeight = initialItemHeights.sum() + ((items.size - 1).coerceAtLeast(0) * initialSpacingPx)
-
-            val scaleFactor = if (initialTotalBlockHeight > availableHeight) {
-                availableHeight / initialTotalBlockHeight
-            } else {
-                1.0f
-            }
-
+            val scaleFactor = if (initialTotalBlockHeight > availableHeight) availableHeight / initialTotalBlockHeight else 1.0f
             val scaledImageMaxWidthPx = initialImageMaxWidthPx * scaleFactor
             val scaledSpacingPx = initialSpacingPx * scaleFactor
             val scaledItemHeights = initialItemHeights.map { it * scaleFactor }
             val totalBlockHeight = scaledItemHeights.sum() + ((items.size - 1).coerceAtLeast(0) * scaledSpacingPx)
-
             var currentY = marginPx + (availableHeight - totalBlockHeight) / 2f
             if (currentY < marginPx) currentY = marginPx
-
             updatedItems = items.mapIndexed { index, item ->
                 val imageHeightPx = scaledItemHeights[index]
                 val newOffset = Offset(x = marginPx + (availableWidth - scaledImageMaxWidthPx) / 2f, y = currentY)
