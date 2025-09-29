@@ -1,8 +1,6 @@
 package com.example.scannerpro.Collage
 
 import android.graphics.Bitmap
-import android.graphics.Paint
-import android.graphics.Rect
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -11,7 +9,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.awaitDragOrCancellation
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -32,10 +29,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesomeMosaic
@@ -43,22 +38,16 @@ import androidx.compose.material.icons.filled.BrandingWatermark
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.NoteAdd
 import androidx.compose.material.icons.filled.PhotoSizeSelectLarge
-import androidx.compose.material.icons.filled.Style
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TextField
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -78,10 +67,6 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
-import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.LayoutCoordinates
@@ -93,7 +78,6 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
-import androidx.compose.ui.window.Dialog
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -108,11 +92,7 @@ data class CollageItemData(
     val offset: Offset = Offset.Zero,
     val size: Size = Size.Zero
 )
-
-
-
 data class CollageTemplate(val name: String, val rows: Int, val cols: Int)
-
 
 // ---------------- CollagePage (hijo) ----------------
 @Composable
@@ -621,9 +601,6 @@ fun CollageScreen(
     }
 }
 
-// ====================================================================================
-// ============================= AQUI ESTÁN LOS CAMBIOS =============================
-// ====================================================================================
 @Composable
 private fun CollageBottomMenu(
     isTemplateMenuVisible: Boolean,
@@ -654,17 +631,15 @@ private fun CollageBottomMenu(
             }
         }
         Surface(color = Color(0xFF2C2C2E), contentColor = Color.White) {
-            // CHANGED: Row principal ahora tiene padding horizontal para dar espacio en los bordes
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 8.dp, horizontal = 12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // CHANGED: Reemplazamos la Row interna con una LazyRow para hacerla desplazable.
                 LazyRow(
                     modifier = Modifier.weight(1f),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp), // ADDED: Espaciado consistente entre ítems.
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     item { MainActionItem("Plantilla", Icons.Default.AutoAwesomeMosaic, onTemplateButtonClicked) }
@@ -674,10 +649,8 @@ private fun CollageBottomMenu(
                     item { MainActionItem("Eliminar", Icons.Default.Delete, onDeletePage, isDeleteEnabled) }
                 }
 
-                // ADDED: Un espaciador para asegurar que el botón de guardar no se pegue a la lista.
                 Spacer(modifier = Modifier.width(12.dp))
 
-                // El botón de guardar se mantiene fuera de la LazyRow para que no se desplace.
                 Box(
                     modifier = Modifier
                         .size(48.dp)
@@ -718,7 +691,7 @@ fun MainActionItem(text: String, icon: ImageVector, onClick: () -> Unit, enabled
     Column(
         modifier = Modifier
             .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 4.dp), // Mantenemos un padding pequeño para el área de click
+            .padding(horizontal = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
@@ -765,7 +738,9 @@ private fun DeleteConfirmationDialog(onConfirm: () -> Unit, onDismiss: () -> Uni
     )
 }
 
-
+// ====================================================================================
+// ============================= FUNCIÓN MODIFICADA =================================
+// ====================================================================================
 private fun applyTemplateToItems(
     items: List<CollageItemData>,
     template: CollageTemplate,
@@ -775,33 +750,64 @@ private fun applyTemplateToItems(
 ): List<CollageItemData> {
     if (items.isEmpty() || canvasWidth == 0f || canvasHeight == 0f) return items
     val marginPx = with(density) { 12.dp.toPx() }
-    val availableWidth = canvasWidth - (2 * marginPx); val availableHeight = canvasHeight - (2 * marginPx)
+    val availableWidth = canvasWidth - (2 * marginPx)
+    val availableHeight = canvasHeight - (2 * marginPx)
     val updatedItems: List<CollageItemData>
 
     when (template.name) {
         "Pasaporte" -> {
             val item = items.firstOrNull() ?: return emptyList()
-            val imageMaxWidthPx = availableWidth * 0.7f
-            val aspect = item.bitmap.width.toFloat() / item.bitmap.height.toFloat().coerceAtLeast(1f)
-            val imageSize = Size(imageMaxWidthPx, imageMaxWidthPx / aspect)
+            // Se calcula el tamaño para que quepa tanto en ancho como en alto
+            val bmpW = item.bitmap.width.toFloat()
+            val bmpH = item.bitmap.height.toFloat()
+            if (bmpW <= 0f || bmpH <= 0f) return items
+
+            val wScale = availableWidth / bmpW
+            val hScale = availableHeight / bmpH
+            val scale = min(wScale, hScale) * 0.7f // Usamos un 70% del espacio para mejor estética
+
+            val imageSize = Size(width = bmpW * scale, height = bmpH * scale)
             val offsetX = marginPx + (availableWidth - imageSize.width) / 2
             val offsetY = marginPx + (availableHeight - imageSize.height) / 2
             updatedItems = listOf(item.copy(offset = Offset(offsetX, offsetY), size = imageSize))
         }
         "Licencia de manejo", "ID Card" -> {
-            val imageMaxWidthPx = availableWidth * 0.6f
-            val spacingPx = with(density) { 16.dp.toPx() }
-            val itemHeights = items.map { val aspect = if (it.bitmap.height > 0) it.bitmap.width.toFloat() / it.bitmap.height.toFloat() else 1f; imageMaxWidthPx / aspect }
-            val totalBlockHeight = itemHeights.sum() + ((items.size - 1).coerceAtLeast(0) * spacingPx)
+            // --- INICIO DE LA LÓGICA MEJORADA ---
+            val initialImageMaxWidthPx = availableWidth * 0.8f // Un poco más grande para empezar
+            val initialSpacingPx = with(density) { 16.dp.toPx() }
+
+            // 1. Calcular altura total con el tamaño inicial
+            val initialItemHeights = items.map {
+                val aspect = if (it.bitmap.height > 0) it.bitmap.width.toFloat() / it.bitmap.height.toFloat() else 1f
+                initialImageMaxWidthPx / aspect
+            }
+            val initialTotalBlockHeight = initialItemHeights.sum() + ((items.size - 1).coerceAtLeast(0) * initialSpacingPx)
+
+            // 2. Detectar si el contenido excede la altura y calcular factor de escala si es necesario
+            val scaleFactor = if (initialTotalBlockHeight > availableHeight) {
+                availableHeight / initialTotalBlockHeight
+            } else {
+                1.0f
+            }
+
+            // 3. Aplicar el factor de escala a todos los tamaños
+            val scaledImageMaxWidthPx = initialImageMaxWidthPx * scaleFactor
+            val scaledSpacingPx = initialSpacingPx * scaleFactor
+            val scaledItemHeights = initialItemHeights.map { it * scaleFactor }
+            val totalBlockHeight = scaledItemHeights.sum() + ((items.size - 1).coerceAtLeast(0) * scaledSpacingPx)
+
+            // 4. Posicionar los elementos escalados y centrados
             var currentY = marginPx + (availableHeight - totalBlockHeight) / 2f
             if (currentY < marginPx) currentY = marginPx
+
             updatedItems = items.mapIndexed { index, item ->
-                val imageHeightPx = itemHeights[index]
-                val newOffset = Offset(x = marginPx + (availableWidth - imageMaxWidthPx) / 2f, y = currentY)
-                val newSize = Size(imageMaxWidthPx, imageHeightPx)
-                currentY += imageHeightPx + spacingPx
+                val imageHeightPx = scaledItemHeights[index]
+                val newOffset = Offset(x = marginPx + (availableWidth - scaledImageMaxWidthPx) / 2f, y = currentY)
+                val newSize = Size(scaledImageMaxWidthPx, imageHeightPx)
+                currentY += imageHeightPx + scaledSpacingPx
                 item.copy(offset = newOffset, size = newSize)
             }
+            // --- FIN DE LA LÓGICA MEJORADA ---
         }
         else -> {
             val spacingPx = with(density) { 8.dp.toPx() }
@@ -813,6 +819,7 @@ private fun applyTemplateToItems(
                 val newX = marginPx + c * (cellWidth + spacingPx); val newY = marginPx + r * (cellHeight + spacingPx)
                 val bmpW = item.bitmap.width.toFloat(); val bmpH = item.bitmap.height.toFloat()
                 if (bmpW <= 0f || bmpH <= 0f) return@mapIndexedNotNull item.copy(size = Size.Zero)
+                // Esta lógica ya es correcta: escala la imagen para que quepa en la celda
                 val wScale = cellWidth / bmpW; val hScale = cellHeight / bmpH; val scale = min(wScale, hScale)
                 val newSize = Size(width = bmpW * scale, height = bmpH * scale)
                 val centeredX = newX + (cellWidth - newSize.width) / 2; val centeredY = newY + (cellHeight - newSize.height) / 2
