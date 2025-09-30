@@ -13,6 +13,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,6 +29,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.pager.HorizontalPager
@@ -286,33 +288,39 @@ fun FinalReviewScreen(
                                 isSelectionModeActive = false
                                 selectedIndices = emptySet()
                             },
-                            onShare = { showShareSheet = true }
+                            onShare = {
+                                if (selectedIndices.isNotEmpty()) {
+                                    showShareSheet = true
+                                }
+                            }
                         )
-                        isEditMode ->MainBottomMenu (
-
-
+                        isEditMode -> MainBottomMenu(
                             context = context,
                             bitmapsNotEmpty = bitmaps.isNotEmpty(),
-                            onEdit = { if (bitmaps.isNotEmpty()) { selectedIndex = 0; isEditMode = true } },
+                            onEdit = { selectedIndex?.let { onEditRequest(it) } },
                             onSave = {
                                 bitmaps.forEachIndexed { index, bitmap ->
                                     saveBitmapToGallery(context, bitmap, "Scan_${System.currentTimeMillis()}_p${index + 1}")
                                 }
                             },
                             onShare = {
-                                isSelectionModeActive = true
-                                selectedIndices = bitmaps.indices.toSet()
-                                showShareSheet = true
+                                if (bitmaps.isNotEmpty()) {
+                                    selectedIndices = bitmaps.indices.toSet()
+                                    showShareSheet = true
+                                }
                             }
-
-
                         )
                         else -> EditBottomMenu(
                             enabled = selectedIndex != null,
+                            shareEnabled = bitmaps.isNotEmpty(),
                             onAdd = onAddAnotherScan,
-                            onEdit = { selectedIndex?.let { onEditRequest(it) } },
                             onMarkup = { isMarkupMode = true },
-                            onFinish = { isEditMode = false }
+                            onShare = {
+                                if (bitmaps.isNotEmpty()) {
+                                    selectedIndices = bitmaps.indices.toSet() // Select all by default
+                                    showShareSheet = true
+                                }
+                            }
                         )
                     }
                 }
@@ -321,8 +329,15 @@ fun FinalReviewScreen(
 
         if (showShareSheet) {
             ShareBottomSheet(
-                onDismiss = { showShareSheet = false },
-                selectionCount = selectedIndices.size,
+                bitmaps = bitmaps,
+                selectedIndices = selectedIndices,
+                onSelectionChange = { newSelection -> selectedIndices = newSelection },
+                onDismiss = {
+                    showShareSheet = false
+                    if (!isSelectionModeActive) {
+                        selectedIndices = emptySet()
+                    }
+                },
                 onShareAsPdf = {
                     coroutineScope.launch {
                         showShareSheet = false
@@ -372,12 +387,11 @@ private fun MainBottomMenu(context: Context, bitmapsNotEmpty: Boolean, onEdit: (
 }
 
 @Composable
-private fun EditBottomMenu(enabled: Boolean, onAdd: () -> Unit, onEdit: () -> Unit, onMarkup: () -> Unit, onFinish: () -> Unit) {
+private fun EditBottomMenu(enabled: Boolean, shareEnabled: Boolean, onAdd: () -> Unit, onMarkup: () -> Unit, onShare: () -> Unit) {
     Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
         ActionButton(icon = Icons.Default.Add, text = "Agregar", onClick = onAdd)
-        ActionButton(icon = Icons.Default.Edit, text = "Editar", enabled = enabled, onClick = onEdit)
         ActionButton(icon = Icons.Default.Brush, text = "Markup", enabled = enabled, onClick = onMarkup)
-        ActionButton(icon = Icons.Default.Check, text = "Finalizar", onClick = onFinish)
+        ActionButton(icon = Icons.Default.Share, text = "Compartir", enabled = shareEnabled, onClick = onShare)
     }
 }
 
@@ -631,43 +645,172 @@ private fun AddPageFullScreenItem(onClick: () -> Unit, modifier: Modifier = Modi
     }
 }
 
-// --- Código de Markup, Share, y utilidades (sin cambios) ---
+// --- Código de Markup, Share, y utilidades (con cambios en ShareBottomSheet) ---
+
+@Composable
+private fun SelectablePageThumbnail(
+    bitmap: Bitmap,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .width(80.dp)
+            .aspectRatio(1f / 1.41f) // A4 aspect ratio
+            .clip(RoundedCornerShape(4.dp))
+            .border(
+                width = 2.dp,
+                color = if (isSelected) Color(0xFF30D5C8) else Color.Transparent,
+                shape = RoundedCornerShape(4.dp)
+            )
+            .clickable(onClick = onClick)
+    ) {
+        Image(
+            bitmap = bitmap.asImageBitmap(),
+            contentDescription = "Page thumbnail",
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize()
+        )
+        if (isSelected) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.4f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Check,
+                    contentDescription = "Selected",
+                    tint = Color.White,
+                    modifier = Modifier
+                        .size(32.dp)
+                        .background(Color(0xFF30D5C8), CircleShape)
+                        .padding(4.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SelectablePagesRow(
+    bitmaps: List<Bitmap>,
+    selectedIndices: Set<Int>,
+    onSelectionChange: (Set<Int>) -> Unit
+) {
+    LazyRow(
+        contentPadding = PaddingValues(top = 8.dp, bottom = 16.dp, start = 16.dp, end = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        items(bitmaps.size) { index ->
+            SelectablePageThumbnail(
+                bitmap = bitmaps[index],
+                isSelected = index in selectedIndices,
+                onClick = {
+                    val newSelection = selectedIndices.toMutableSet()
+                    if (index in newSelection) {
+                        newSelection.remove(index)
+                    } else {
+                        newSelection.add(index)
+                    }
+                    onSelectionChange(newSelection)
+                }
+            )
+        }
+    }
+}
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ShareBottomSheet(
+    bitmaps: List<Bitmap>,
+    selectedIndices: Set<Int>,
+    onSelectionChange: (Set<Int>) -> Unit,
     onDismiss: () -> Unit,
     onShareAsPdf: () -> Unit,
     onShareImages: () -> Unit,
-    onSaveToGallery: () -> Unit,
-    selectionCount: Int
+    onSaveToGallery: () -> Unit
 ) {
-    val modalBottomSheetState = rememberModalBottomSheetState()
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = modalBottomSheetState,
-        containerColor = Color(0xFF2C2C2E)
+    val selectionCount = selectedIndices.size
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.5f))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onDismiss
+            ),
+        contentAlignment = Alignment.BottomCenter
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text("Compartir", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp, modifier = Modifier.padding(bottom = 8.dp))
-            ShareOption(icon = Icons.Default.Description, text = "Compartir como PDF (Selección)", onClick = onShareAsPdf, enabled = selectionCount > 0)
-            ShareOption(
-                icon = Icons.Default.Image,
-                text = if (selectionCount == 1) "Compartir como Imagen" else "Compartir como ZIP ($selectionCount pág.)",
-                onClick = onShareImages,
-                enabled = selectionCount > 0
-            )
-            ShareOption(
-                icon = Icons.Default.Download,
-                text = "Guardar en Galería (Selección)",
-                onClick = onSaveToGallery,
-                enabled = selectionCount > 0
-            )
-            Spacer(modifier = Modifier.height(16.dp))
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(enabled = false) {}
+        ) {
+            if (bitmaps.size > 1) {
+                SelectablePagesRow(
+                    bitmaps = bitmaps,
+                    selectedIndices = selectedIndices,
+                    onSelectionChange = onSelectionChange
+                )
+            }
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = Color(0xFF2C2C2E),
+                shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
+            ) {
+                Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 16.dp, end = 16.dp, top = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Compartir", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                        if (bitmaps.size > 1) {
+                            val allSelected = selectedIndices.size == bitmaps.size
+                            val buttonText = if (allSelected) "Deseleccionar" else "Seleccionar todo"
+                            Text(
+                                text = buttonText,
+                                color = Color(0xFF30D5C8),
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.clickable {
+                                    onSelectionChange(
+                                        if (allSelected) emptySet() else bitmaps.indices.toSet()
+                                    )
+                                }
+                            )
+                        }
+                    }
+
+                    Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+                        val pdfText = "Compartir como PDF" + if (selectionCount > 0) " ($selectionCount pág.)" else ""
+                        ShareOption(icon = Icons.Default.Description, text = pdfText, onClick = onShareAsPdf, enabled = selectionCount > 0)
+
+                        ShareOption(
+                            icon = Icons.Default.Image,
+                            text = if (selectionCount == 1) "Compartir como Imagen" else "Compartir como ZIP ($selectionCount pág.)",
+                            onClick = onShareImages,
+                            enabled = selectionCount > 0
+                        )
+
+                        ShareOption(
+                            icon = Icons.Default.Download,
+                            text = "Guardar en Galería",
+                            onClick = onSaveToGallery,
+                            enabled = selectionCount > 0
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                    }
+                }
+            }
         }
     }
 }
+
 
 @Composable
 private fun ShareOption(icon: ImageVector, text: String, onClick: () -> Unit, enabled: Boolean = true) {
