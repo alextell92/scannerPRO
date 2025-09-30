@@ -30,9 +30,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.CornerSize
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
@@ -41,6 +43,7 @@ import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
@@ -118,14 +121,14 @@ fun FinalReviewScreen(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
-    var viewMode by remember {
-        mutableStateOf(AppPreferences.getViewMode(context))
-    }
+    var viewMode by remember { mutableStateOf(AppPreferences.getViewMode(context)) }
     var selectedIndex by remember { mutableStateOf<Int?>(if (bitmaps.isNotEmpty()) 0 else null) }
-    var showShareSheet by remember { mutableStateOf(false) }
+    var isEditMode by remember { mutableStateOf(false) }
 
+    var showShareSheet by remember { mutableStateOf(false) }
     var isSelectionModeActive by remember { mutableStateOf(false) }
     var selectedIndices by remember { mutableStateOf<Set<Int>>(emptySet()) }
+
     var isCollageMode by remember { mutableStateOf(false) }
     var bitmapsForCollage by remember { mutableStateOf<List<Bitmap>>(emptyList()) }
 
@@ -150,205 +153,167 @@ fun FinalReviewScreen(
                 initialBitmaps = bitmapsForCollage,
                 repository = repository,
                 onClose = { isCollageMode = false },
-                onSave = {
-                    isCollageMode = false
-                }
+                onSave = { isCollageMode = false }
             )
         } else {
-            Box(modifier = Modifier.fillMaxSize()) {
-                Column(modifier = Modifier.fillMaxSize()) {
-                    TopAppBar(
-                        title = {
-                            val titleText = when {
-                                isSelectionModeActive -> "${selectedIndices.size} seleccionados"
-                                viewMode == ViewMode.PAGE && selectedIndex != null && bitmaps.isNotEmpty() -> "Página ${selectedIndex!! + 1} de ${bitmaps.size}"
-                                else -> "Documentos (${bitmaps.size})"
-                            }
-                            Text(titleText, color = Color.White)
-                        },
-                        navigationIcon = {
-                            if (isSelectionModeActive) {
-                                IconButton(onClick = {
+            Column(modifier = Modifier.fillMaxSize()) {
+                TopAppBar(
+                    title = {
+                        val titleText = when {
+                            isSelectionModeActive -> "${selectedIndices.size} seleccionados"
+                            isEditMode && selectedIndex != null -> "Página ${selectedIndex!! + 1} de ${bitmaps.size}"
+                            else -> "Documentos (${bitmaps.size})"
+                        }
+                        Text(titleText, color = Color.White)
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = {
+                            when {
+                                isSelectionModeActive -> {
                                     isSelectionModeActive = false
                                     selectedIndices = emptySet()
-                                }) {
-                                    Icon(Icons.Default.ArrowBack, "Cancelar selección", tint = Color.White)
                                 }
-                            } else {
-                                IconButton(onClick = onFinish) {
-                                    Icon(Icons.Default.ArrowBack, "Volver a Home", tint = Color.White)
-                                }
+                                isEditMode -> isEditMode = false
+                                else -> onFinish()
                             }
-                        },
-                        actions = {
-                            if (isSelectionModeActive) {
-                                IconButton(onClick = {
-                                    selectedIndices = if (selectedIndices.size == bitmaps.size) emptySet() else bitmaps.indices.toSet()
-                                }) {
-                                    Icon(Icons.Default.SelectAll, "Seleccionar todo", tint = Color.White)
+                        }) {
+                            Icon(Icons.Default.ArrowBack, "Atrás", tint = Color.White)
+                        }
+                    },
+                    actions = {
+                        if (isSelectionModeActive) {
+                            IconButton(onClick = {
+                                if (viewMode == ViewMode.PAGE) {
+                                    viewMode = ViewMode.GRID
+                                    AppPreferences.setViewMode(context, ViewMode.GRID)
                                 }
-                            } else {
-                                IconButton(onClick = { isSelectionModeActive = true }) {
-                                    Icon(Icons.Default.CheckBox, "Seleccionar", tint = Color.White)
-                                }
-                                IconButton(onClick = {
-                                    viewMode = when (viewMode) {
-                                        ViewMode.LIST -> ViewMode.GRID
-                                        ViewMode.GRID -> ViewMode.PAGE
-                                        ViewMode.PAGE -> ViewMode.LIST
-                                    }
-                                    AppPreferences.setViewMode(context, viewMode)
-                                }) {
-                                    val icon = when (viewMode) {
-                                        ViewMode.LIST -> Icons.Default.GridView
-                                        ViewMode.GRID -> Icons.Default.Image
-                                        ViewMode.PAGE -> Icons.Default.List
-                                    }
-                                    Icon(
-                                        imageVector = icon,
-                                        contentDescription = "Cambiar vista",
-                                        tint = Color.White
-                                    )
-                                }
+                                selectedIndices = if (selectedIndices.size == bitmaps.size) emptySet() else bitmaps.indices.toSet()
+                            }) {
+                                Icon(Icons.Default.SelectAll, "Seleccionar todo", tint = Color.White)
                             }
-                        },
-                        colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF2C2C2E))
-                    )
+                        } else if (!isEditMode) {
+                            IconButton(onClick = {
+                                if (viewMode == ViewMode.PAGE) {
+                                    viewMode = ViewMode.GRID
+                                }
+                                isSelectionModeActive = true
+                            }) {
+                                Icon(Icons.Default.CheckBox, "Seleccionar", tint = Color.White)
+                            }
+                            IconButton(onClick = {
+                                viewMode = when (viewMode) {
+                                    ViewMode.LIST -> ViewMode.GRID
+                                    ViewMode.GRID -> ViewMode.PAGE
+                                    ViewMode.PAGE -> ViewMode.LIST
+                                }
+                                AppPreferences.setViewMode(context, viewMode)
+                            }) {
+                                val icon = when (viewMode) {
+                                    ViewMode.LIST -> Icons.Default.GridView
+                                    ViewMode.GRID -> Icons.Default.Image
+                                    ViewMode.PAGE -> Icons.Default.List
+                                }
+                                Icon(icon, "Cambiar vista", tint = Color.White)
+                            }
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF2C2C2E))
+                )
 
-                    when (viewMode) {
-                        ViewMode.LIST -> {
-                            LazyColumn(
-                                modifier = Modifier.weight(1f),
-                                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 80.dp),
-                                verticalArrangement = Arrangement.spacedBy(16.dp)
-                            ) {
-                                val count = bitmaps.size
-                                items(count + 1, key = { index -> if (index < count) bitmaps[index].hashCode() else "add_button_list" }) { index ->
-                                    if (index < count) {
-                                        BitmapListItem(
-                                            bitmap = bitmaps[index],
-                                            pageNumber = index + 1,
-                                            isSelected = if (isSelectionModeActive) index in selectedIndices else selectedIndex == index,
-                                            isSelectionModeActive = isSelectionModeActive,
-                                            onClick = {
-                                                if (isSelectionModeActive) {
-                                                    selectedIndices = if (index in selectedIndices) selectedIndices - index else selectedIndices + index
-                                                } else {
-                                                    selectedIndex = index
-                                                }
-                                            }
-                                        )
-                                    } else {
-                                        AddPageListItem(onClick = onAddAnotherScan)
-                                    }
-                                }
-                            }
+                // --- Vistas de contenido ---
+                Box(modifier = Modifier.weight(1f)) {
+                    if (isEditMode && bitmaps.isNotEmpty()) {
+                        val pagerState = rememberPagerState(initialPage = selectedIndex ?: 0) { bitmaps.size }
+                        LaunchedEffect(pagerState.currentPage) {
+                            selectedIndex = pagerState.currentPage
                         }
-                        ViewMode.GRID -> {
-                            LazyVerticalGrid(
-                                columns = GridCells.Fixed(2),
-                                modifier = Modifier.weight(1f),
-                                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 96.dp),
-                                verticalArrangement = Arrangement.spacedBy(16.dp),
-                                horizontalArrangement = Arrangement.spacedBy(16.dp)
-                            ) {
-                                val count = bitmaps.size
-                                items(count + 1, key = { index -> if (index < count) bitmaps[index].hashCode() else "add_button_grid" }) { index ->
-                                    if (index < count) {
-                                        BitmapGridItem(
-                                            bitmap = bitmaps[index],
-                                            pageNumber = index + 1,
-                                            isSelected = if (isSelectionModeActive) index in selectedIndices else selectedIndex == index,
-                                            isSelectionModeActive = isSelectionModeActive,
-                                            onClick = {
-                                                if (isSelectionModeActive) {
-                                                    selectedIndices = if (index in selectedIndices) selectedIndices - index else selectedIndices + index
-                                                } else {
-                                                    selectedIndex = index
-                                                }
-                                            }
-                                        )
-                                    } else {
-                                        AddPageGridItem(onClick = onAddAnotherScan)
-                                    }
-                                }
-                            }
+                        HorizontalPager(
+                            state = pagerState,
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(0.dp),
+                        ) { page ->
+                            Image(
+                                bitmap = bitmaps[page].asImageBitmap(),
+                                contentDescription = "Página ${page + 1}",
+                                modifier = Modifier.fillMaxSize().padding(16.dp),
+                                contentScale = ContentScale.Fit
+                            )
                         }
-                        ViewMode.PAGE -> {
-                            val listState = rememberLazyListState(initialFirstVisibleItemIndex = selectedIndex ?: 0)
-                            LaunchedEffect(listState.firstVisibleItemIndex) {
-                                selectedIndex = listState.firstVisibleItemIndex
-                            }
-                            LazyColumn(
-                                state = listState,
-                                modifier = Modifier.weight(1f),
-                                verticalArrangement = Arrangement.spacedBy(16.dp),
-                                contentPadding = PaddingValues(top = 16.dp, bottom = 80.dp)
-                            ) {
-                                items(bitmaps.size) { index ->
-                                    Image(
-                                        bitmap = bitmaps[index].asImageBitmap(),
-                                        contentDescription = "Página ${index + 1}",
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 16.dp),
-                                        contentScale = ContentScale.Fit
-                                    )
+                    } else {
+                        when (viewMode) {
+                            ViewMode.LIST -> ListView(bitmaps, isSelectionModeActive, selectedIndices, selectedIndex, { index ->
+                                if (isSelectionModeActive) {
+                                    selectedIndices = if (index in selectedIndices) selectedIndices - index else selectedIndices + index
+                                } else {
+                                    selectedIndex = index
+                                    isEditMode = true
                                 }
-                                item {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 16.dp, vertical = 8.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        AddPageFullScreenItem(onClick = onAddAnotherScan)
-                                    }
+                            }, onAddAnotherScan)
+                            ViewMode.GRID -> GridView(bitmaps, isSelectionModeActive, selectedIndices, selectedIndex, { index ->
+                                if (isSelectionModeActive) {
+                                    selectedIndices = if (index in selectedIndices) selectedIndices - index else selectedIndices + index
+                                } else {
+                                    selectedIndex = index
+                                    isEditMode = true
                                 }
-                            }
+                            }, onAddAnotherScan)
+                            ViewMode.PAGE -> PageView(bitmaps, selectedIndex, { index ->
+                                selectedIndex = index
+                                isEditMode = true
+                            }, onAddAnotherScan)
                         }
                     }
                 }
 
+                // --- Menú inferior contextual ---
                 Surface(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth(),
                     color = Color(0xFF2C2C2E),
                     contentColor = Color.White
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        if (isSelectionModeActive) {
-                            ActionButton(icon = Icons.Default.Delete, text = "Eliminar", enabled = selectedIndices.isNotEmpty(), onClick = {
+                    when {
+                        isSelectionModeActive -> SelectionBottomMenu(
+                            enabled = selectedIndices.isNotEmpty(),
+                            onDelete = {
                                 bitmaps = bitmaps.filterIndexed { index, _ -> index !in selectedIndices }
                                 selectedIndices = emptySet()
                                 isSelectionModeActive = false
-                                selectedIndex = if(bitmaps.isNotEmpty()) 0 else null
-                            })
-                            ActionButton(
-                                icon = Icons.Default.AutoAwesomeMosaic,
-                                text = "Collage",
-                                enabled = selectedIndices.isNotEmpty(),
-                                onClick = {
-                                    bitmapsForCollage = bitmaps.filterIndexed { index, _ -> index in selectedIndices }
-                                    isCollageMode = true
-                                    isSelectionModeActive = false
-                                    selectedIndices = emptySet()
+                                selectedIndex = if (bitmaps.isNotEmpty()) 0 else null
+                            },
+                            onCollage = {
+                                bitmapsForCollage = bitmaps.filterIndexed { index, _ -> index in selectedIndices }
+                                isCollageMode = true
+                                isSelectionModeActive = false
+                                selectedIndices = emptySet()
+                            },
+                            onShare = { showShareSheet = true }
+                        )
+                        isEditMode ->MainBottomMenu (
+
+
+                            context = context,
+                            bitmapsNotEmpty = bitmaps.isNotEmpty(),
+                            onEdit = { if (bitmaps.isNotEmpty()) { selectedIndex = 0; isEditMode = true } },
+                            onSave = {
+                                bitmaps.forEachIndexed { index, bitmap ->
+                                    saveBitmapToGallery(context, bitmap, "Scan_${System.currentTimeMillis()}_p${index + 1}")
                                 }
-                            )
-                            ActionButton(icon = Icons.Default.Share, text = "Compartir", enabled = selectedIndices.isNotEmpty(), onClick = { showShareSheet = true })
-                        } else {
-                            ActionButton(icon = Icons.Default.Add, text = "Agregar", onClick = onAddAnotherScan)
-                            ActionButton(icon = Icons.Default.Edit, text = "Editar", enabled = selectedIndex != null, onClick = { selectedIndex?.let { onEditRequest(it) } })
-                            ActionButton(icon = Icons.Default.Brush, text = "Markup", enabled = selectedIndex != null, onClick = { isMarkupMode = true })
-                            ActionButton(icon = Icons.Default.Check, text = "Finalizar", enabled = bitmaps.isNotEmpty(), onClick = onFinish)
-                        }
+                            },
+                            onShare = {
+                                isSelectionModeActive = true
+                                selectedIndices = bitmaps.indices.toSet()
+                                showShareSheet = true
+                            }
+
+
+                        )
+                        else -> EditBottomMenu(
+                            enabled = selectedIndex != null,
+                            onAdd = onAddAnotherScan,
+                            onEdit = { selectedIndex?.let { onEditRequest(it) } },
+                            onMarkup = { isMarkupMode = true },
+                            onFinish = { isEditMode = false }
+                        )
                     }
                 }
             }
@@ -364,9 +329,7 @@ fun FinalReviewScreen(
                         val bitmapsToShare = bitmaps.filterIndexed { index, _ -> index in selectedIndices }
                         if (bitmapsToShare.isNotEmpty()) {
                             val pdfUri = createPdfFromBitmapsAndGetUri(context, bitmapsToShare)
-                            pdfUri?.let { uri ->
-                                shareUri(context, uri, "application/pdf")
-                            } ?: Toast.makeText(context, "Error al crear el PDF", Toast.LENGTH_SHORT).show()
+                            pdfUri?.let { uri -> shareUri(context, uri, "application/pdf") } ?: Toast.makeText(context, "Error al crear el PDF", Toast.LENGTH_SHORT).show()
                         }
                     }
                 },
@@ -387,9 +350,7 @@ fun FinalReviewScreen(
                             shareBitmapAsImage(context, bitmapsToShare.first())
                         } else if (bitmapsToShare.size > 1) {
                             val zipUri = createZipFromBitmapsAndGetUri(context, bitmapsToShare, "escaneo.zip")
-                            zipUri?.let { uri ->
-                                shareUri(context, uri, "application/zip")
-                            } ?: Toast.makeText(context, "Error al crear el ZIP", Toast.LENGTH_SHORT).show()
+                            zipUri?.let { uri -> shareUri(context, uri, "application/zip") } ?: Toast.makeText(context, "Error al crear el ZIP", Toast.LENGTH_SHORT).show()
                         }
                     }
                 }
@@ -397,6 +358,280 @@ fun FinalReviewScreen(
         }
     }
 }
+
+// --- Menús Inferiores ---
+
+@Composable
+private fun MainBottomMenu(context: Context, bitmapsNotEmpty: Boolean, onEdit: () -> Unit, onSave: () -> Unit, onShare: () -> Unit) {
+    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+        ActionButton(icon = Icons.Default.Edit, text = "Editar", enabled = bitmapsNotEmpty, onClick = onEdit)
+        ActionButton(icon = Icons.Default.Description, text = "Word", onClick = { Toast.makeText(context, "Próximamente: Exportar a Word", Toast.LENGTH_SHORT).show() })
+        ActionButton(icon = Icons.Default.Download, text = "Guardar", enabled = bitmapsNotEmpty, onClick = onSave)
+        ActionButton(icon = Icons.Default.Share, text = "Compartir", enabled = bitmapsNotEmpty, onClick = onShare)
+    }
+}
+
+@Composable
+private fun EditBottomMenu(enabled: Boolean, onAdd: () -> Unit, onEdit: () -> Unit, onMarkup: () -> Unit, onFinish: () -> Unit) {
+    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+        ActionButton(icon = Icons.Default.Add, text = "Agregar", onClick = onAdd)
+        ActionButton(icon = Icons.Default.Edit, text = "Editar", enabled = enabled, onClick = onEdit)
+        ActionButton(icon = Icons.Default.Brush, text = "Markup", enabled = enabled, onClick = onMarkup)
+        ActionButton(icon = Icons.Default.Check, text = "Finalizar", onClick = onFinish)
+    }
+}
+
+@Composable
+private fun SelectionBottomMenu(enabled: Boolean, onDelete: () -> Unit, onCollage: () -> Unit, onShare: () -> Unit) {
+    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+        ActionButton(icon = Icons.Default.Delete, text = "Eliminar", enabled = enabled, onClick = onDelete)
+        ActionButton(icon = Icons.Default.AutoAwesomeMosaic, text = "Collage", enabled = enabled, onClick = onCollage)
+        ActionButton(icon = Icons.Default.Share, text = "Compartir", enabled = enabled, onClick = onShare)
+    }
+}
+
+// --- Vistas de Contenido ---
+
+@Composable
+private fun ListView(bitmaps: List<Bitmap>, isSelectionModeActive: Boolean, selectedIndices: Set<Int>, selectedIndex: Int?, onItemClick: (Int) -> Unit, onAddClick: () -> Unit) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 80.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        items(bitmaps.size) { index ->
+            BitmapListItem(
+                bitmap = bitmaps[index],
+                pageNumber = index + 1,
+                isSelected = if (isSelectionModeActive) index in selectedIndices else selectedIndex == index,
+                isSelectionModeActive = isSelectionModeActive,
+                onClick = { onItemClick(index) }
+            )
+        }
+        item { AddPageListItem(onClick = onAddClick) }
+    }
+}
+
+@Composable
+private fun GridView(bitmaps: List<Bitmap>, isSelectionModeActive: Boolean, selectedIndices: Set<Int>, selectedIndex: Int?, onItemClick: (Int) -> Unit, onAddClick: () -> Unit) {
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(2),
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 96.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        items(bitmaps.size) { index ->
+            BitmapGridItem(
+                bitmap = bitmaps[index],
+                pageNumber = index + 1,
+                isSelected = if (isSelectionModeActive) index in selectedIndices else selectedIndex == index,
+                isSelectionModeActive = isSelectionModeActive,
+                onClick = { onItemClick(index) }
+            )
+        }
+        item { AddPageGridItem(onClick = onAddClick) }
+    }
+}
+
+@Composable
+private fun PageView(bitmaps: List<Bitmap>, selectedIndex: Int?, onItemClick: (Int) -> Unit, onAddClick: () -> Unit) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(top = 16.dp, bottom = 80.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        items(bitmaps.size) { index ->
+            Image(
+                bitmap = bitmaps[index].asImageBitmap(),
+                contentDescription = "Página ${index + 1}",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .clickable { onItemClick(index) },
+                contentScale = ContentScale.Fit
+            )
+        }
+        item {
+            Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
+                AddPageFullScreenItem(onClick = onAddClick)
+            }
+        }
+    }
+}
+
+
+@Composable
+private fun BitmapListItem(
+    bitmap: Bitmap,
+    pageNumber: Int,
+    isSelected: Boolean,
+    isSelectionModeActive: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val borderColor = if (isSelected && !isSelectionModeActive) Color(0xFF30D5C8) else Color.Transparent
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(120.dp)
+            .border(2.dp, borderColor, shape = RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color.DarkGray)
+            .clickable(onClick = onClick)
+    ) {
+        Row(
+            modifier = Modifier.padding(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = "Página $pageNumber",
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .aspectRatio(1f / 1.41f),
+                contentScale = ContentScale.Fit
+            )
+            Spacer(Modifier.width(16.dp))
+            Text("Página $pageNumber", color = Color.White, fontWeight = FontWeight.Bold)
+        }
+        if (isSelectionModeActive) {
+            Icon(
+                imageVector = if (isSelected) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
+                contentDescription = "Seleccionar",
+                tint = Color.White,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp)
+                    .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+            )
+        }
+    }
+}
+
+@Composable
+private fun BitmapGridItem(
+    bitmap: Bitmap,
+    pageNumber: Int,
+    isSelected: Boolean,
+    isSelectionModeActive: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val borderColor = if (isSelected && !isSelectionModeActive) Color(0xFF30D5C8) else Color.Transparent
+    Box(
+        modifier = modifier
+            .border(2.dp, borderColor, shape = RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color.DarkGray)
+            .clickable(onClick = onClick)
+    ) {
+        Column(
+            modifier = Modifier.padding(8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = "Página $pageNumber",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(1f / 1.41f),
+                contentScale = ContentScale.Fit
+            )
+            Spacer(Modifier.height(8.dp))
+            Text("Página $pageNumber", color = Color.White, fontSize = 12.sp)
+        }
+        if (isSelectionModeActive) {
+            Icon(
+                imageVector = if (isSelected) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
+                contentDescription = "Seleccionar",
+                tint = Color.White,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp)
+                    .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+            )
+        }
+    }
+}
+@Composable
+private fun AddPageListItem(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(120.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color.DarkGray)
+            .border(
+                2.dp,
+                Color(0xFF444444),
+                shape = RoundedCornerShape(8.dp)
+            )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(Icons.Default.Add, "Añadir Página", tint = Color.Gray, modifier = Modifier.size(40.dp))
+            Spacer(modifier = Modifier.height(8.dp))
+            Text("Añadir Página", color = Color.Gray)
+        }
+    }
+}
+@Composable
+private fun AddPageGridItem(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color.DarkGray)
+            .border(
+                2.dp,
+                Color(0xFF444444),
+                shape = RoundedCornerShape(8.dp)
+            )
+            .clickable(onClick = onClick)
+            .padding(8.dp)
+            .fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(1f / 1.41f),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Icon(Icons.Default.Add, "Añadir Página", tint = Color.Gray, modifier = Modifier.size(40.dp))
+            Spacer(Modifier.height(8.dp))
+            Text("Añadir Página", color = Color.Gray, fontSize = 12.sp)
+        }
+    }
+}
+
+@Composable
+private fun AddPageFullScreenItem(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(200.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color.DarkGray)
+            .border(
+                2.dp,
+                Color(0xFF444444),
+                shape = RoundedCornerShape(8.dp)
+            )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(Icons.Default.Add, "Añadir Página", tint = Color.Gray, modifier = Modifier.size(48.dp))
+            Spacer(modifier = Modifier.height(8.dp))
+            Text("Añadir Página", color = Color.Gray, fontSize = 16.sp)
+        }
+    }
+}
+
+// --- Código de Markup, Share, y utilidades (sin cambios) ---
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -450,101 +685,6 @@ private fun ShareOption(icon: ImageVector, text: String, onClick: () -> Unit, en
         Text(text, color = tint)
     }
 }
-
-@Composable
-private fun BitmapListItem(
-    bitmap: Bitmap,
-    pageNumber: Int,
-    isSelected: Boolean,
-    isSelectionModeActive: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit
-) {
-    val borderColor = if (isSelected && !isSelectionModeActive) Color(0xFF30D5C8) else Color.Transparent
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(120.dp)
-            .border(2.dp, borderColor, shape = CircleShape.copy(all = CornerSize(8.dp)))
-            .clip(CircleShape.copy(all = CornerSize(8.dp)))
-            .background(Color.DarkGray)
-            .clickable(onClick = onClick)
-    ) {
-        Row(
-            modifier = Modifier.padding(8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Image(
-                bitmap = bitmap.asImageBitmap(),
-                contentDescription = "Página $pageNumber",
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .aspectRatio(1f / 1.41f),
-                contentScale = ContentScale.Fit
-            )
-            Spacer(Modifier.width(16.dp))
-            Text("Página $pageNumber", color = Color.White, fontWeight = FontWeight.Bold)
-        }
-        if (isSelectionModeActive) {
-            Icon(
-                imageVector = if (isSelected) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
-                contentDescription = "Seleccionar",
-                tint = Color.White,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(8.dp)
-                    .background(Color.Black.copy(alpha = 0.5f), CircleShape)
-            )
-        }
-    }
-}
-
-@Composable
-private fun BitmapGridItem(
-    bitmap: Bitmap,
-    pageNumber: Int,
-    isSelected: Boolean,
-    isSelectionModeActive: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit
-) {
-    val borderColor = if (isSelected && !isSelectionModeActive) Color(0xFF30D5C8) else Color.Transparent
-    Box(
-        modifier = modifier
-            .border(2.dp, borderColor, shape = CircleShape.copy(all = CornerSize(8.dp)))
-            .clip(CircleShape.copy(all = CornerSize(8.dp)))
-            .background(Color.DarkGray)
-            .clickable(onClick = onClick)
-    ) {
-        Column(
-            modifier = Modifier.padding(8.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Image(
-                bitmap = bitmap.asImageBitmap(),
-                contentDescription = "Página $pageNumber",
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(1f / 1.41f),
-                contentScale = ContentScale.Fit
-            )
-            Spacer(Modifier.height(8.dp))
-            Text("Página $pageNumber", color = Color.White, fontSize = 12.sp)
-        }
-        if (isSelectionModeActive) {
-            Icon(
-                imageVector = if (isSelected) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
-                contentDescription = "Seleccionar",
-                tint = Color.White,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(8.dp)
-                    .background(Color.Black.copy(alpha = 0.5f), CircleShape)
-            )
-        }
-    }
-}
-
 
 @Composable
 private fun MarkupScreen(
@@ -822,100 +962,6 @@ private fun createPdfFromBitmapsAndGetUri(context: Context, bitmaps: List<Bitmap
         return null
     } finally {
         pdfDocument.close()
-    }
-}
-
-
-@Composable
-private fun AddPageListItem(onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(120.dp)
-            .clip(CircleShape.copy(all = CornerSize(8.dp)))
-            .background(Color.DarkGray)
-            .border(
-                2.dp,
-                Color(0xFF444444),
-                shape = CircleShape.copy(all = CornerSize(8.dp))
-            )
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(
-                imageVector = Icons.Default.Add,
-                contentDescription = "Añadir Página",
-                tint = Color.Gray,
-                modifier = Modifier.size(40.dp)
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text("Añadir Página", color = Color.Gray)
-        }
-    }
-}
-
-@Composable
-private fun AddPageGridItem(onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier
-            .clip(CircleShape.copy(all = CornerSize(8.dp)))
-            .background(Color.DarkGray)
-            .border(
-                2.dp,
-                Color(0xFF444444),
-                shape = CircleShape.copy(all = CornerSize(8.dp))
-            )
-            .clickable(onClick = onClick)
-            .padding(8.dp)
-            .fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(1f / 1.41f),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            Icon(
-                imageVector = Icons.Default.Add,
-                contentDescription = "Añadir Página",
-                tint = Color.Gray,
-                modifier = Modifier.size(40.dp)
-            )
-            Spacer(Modifier.height(8.dp))
-            Text("Añadir Página", color = Color.Gray, fontSize = 12.sp)
-        }
-    }
-}
-
-@Composable
-private fun AddPageFullScreenItem(onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(160.dp) // <-- Reduced height
-            .clip(CircleShape.copy(all = CornerSize(8.dp)))
-            .background(Color.DarkGray)
-            .border(
-                2.dp,
-                Color(0xFF444444),
-                shape = CircleShape.copy(all = CornerSize(8.dp))
-            )
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(
-                imageVector = Icons.Default.Add,
-                contentDescription = "Añadir Página",
-                tint = Color.Gray,
-                modifier = Modifier.size(48.dp)
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text("Añadir Página", color = Color.Gray, fontSize = 16.sp)
-        }
     }
 }
 
