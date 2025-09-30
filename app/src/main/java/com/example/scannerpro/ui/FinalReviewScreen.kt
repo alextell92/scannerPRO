@@ -279,33 +279,27 @@ fun FinalReviewScreen(
                             LaunchedEffect(listState.firstVisibleItemIndex) {
                                 selectedIndex = listState.firstVisibleItemIndex
                             }
-
                             LazyColumn(
                                 state = listState,
                                 modifier = Modifier.weight(1f),
                                 verticalArrangement = Arrangement.spacedBy(16.dp),
-                                contentPadding = PaddingValues(vertical = 16.dp)
+                                contentPadding = PaddingValues(top = 16.dp, bottom = 80.dp)
                             ) {
                                 items(bitmaps.size) { index ->
-                                    Box(
-                                        modifier = Modifier.fillParentMaxHeight(),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Image(
-                                            bitmap = bitmaps[index].asImageBitmap(),
-                                            contentDescription = "Página ${index + 1}",
-                                            modifier = Modifier
-                                                .fillMaxSize()
-                                                .padding(horizontal = 16.dp),
-                                            contentScale = ContentScale.Fit
-                                        )
-                                    }
+                                    Image(
+                                        bitmap = bitmaps[index].asImageBitmap(),
+                                        contentDescription = "Página ${index + 1}",
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 16.dp),
+                                        contentScale = ContentScale.Fit
+                                    )
                                 }
                                 item {
                                     Box(
                                         modifier = Modifier
-                                            .fillParentMaxHeight()
-                                            .padding(horizontal = 16.dp),
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 16.dp, vertical = 8.dp),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         AddPageFullScreenItem(onClick = onAddAnotherScan)
@@ -901,7 +895,7 @@ private fun AddPageFullScreenItem(onClick: () -> Unit, modifier: Modifier = Modi
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(200.dp) // <-- CAMBIO: Altura reducida
+            .height(160.dp) // <-- Reduced height
             .clip(CircleShape.copy(all = CornerSize(8.dp)))
             .background(Color.DarkGray)
             .border(
