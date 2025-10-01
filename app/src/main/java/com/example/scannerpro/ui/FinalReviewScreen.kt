@@ -29,13 +29,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.CornerSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -45,17 +46,19 @@ import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Draw
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FormatColorText
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Undo
+import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -78,7 +81,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Canvas
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
@@ -134,6 +136,8 @@ fun FinalReviewScreen(
     var isCollageMode by remember { mutableStateOf(false) }
     var bitmapsForCollage by remember { mutableStateOf<List<Bitmap>>(emptyList()) }
 
+    var showMarkupSubMenu by remember { mutableStateOf(false) }
+    var currentPageInPageView by remember { mutableStateOf<Int?>(if (bitmaps.isNotEmpty()) 0 else null) }
 
     Box(
         modifier = Modifier
@@ -164,6 +168,7 @@ fun FinalReviewScreen(
                         val titleText = when {
                             isSelectionModeActive -> "${selectedIndices.size} seleccionados"
                             isEditMode && selectedIndex != null -> "Página ${selectedIndex!! + 1} de ${bitmaps.size}"
+                            viewMode == ViewMode.PAGE && currentPageInPageView != null && !isEditMode -> "Página ${currentPageInPageView!! + 1} de ${bitmaps.size}"
                             else -> "Documentos (${bitmaps.size})"
                         }
                         Text(titleText, color = Color.White)
@@ -237,13 +242,15 @@ fun FinalReviewScreen(
                             Image(
                                 bitmap = bitmaps[page].asImageBitmap(),
                                 contentDescription = "Página ${page + 1}",
-                                modifier = Modifier.fillMaxSize().padding(16.dp),
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(16.dp),
                                 contentScale = ContentScale.Fit
                             )
                         }
                     } else {
                         when (viewMode) {
-                            ViewMode.LIST -> ListView(bitmaps, isSelectionModeActive, selectedIndices, selectedIndex, { index ->
+                            ViewMode.LIST -> ListView(bitmaps, isSelectionModeActive, selectedIndices, selectedIndex, { index: Int ->
                                 if (isSelectionModeActive) {
                                     selectedIndices = if (index in selectedIndices) selectedIndices - index else selectedIndices + index
                                 } else {
@@ -251,7 +258,7 @@ fun FinalReviewScreen(
                                     isEditMode = true
                                 }
                             }, onAddAnotherScan)
-                            ViewMode.GRID -> GridView(bitmaps, isSelectionModeActive, selectedIndices, selectedIndex, { index ->
+                            ViewMode.GRID -> GridView(bitmaps, isSelectionModeActive, selectedIndices, selectedIndex, { index: Int ->
                                 if (isSelectionModeActive) {
                                     selectedIndices = if (index in selectedIndices) selectedIndices - index else selectedIndices + index
                                 } else {
@@ -259,10 +266,17 @@ fun FinalReviewScreen(
                                     isEditMode = true
                                 }
                             }, onAddAnotherScan)
-                            ViewMode.PAGE -> PageView(bitmaps, selectedIndex, { index ->
-                                selectedIndex = index
-                                isEditMode = true
-                            }, onAddAnotherScan)
+                            ViewMode.PAGE -> PageView(
+                                bitmaps = bitmaps,
+                                onItemClick = { index: Int ->
+                                    selectedIndex = index
+                                    isEditMode = true
+                                },
+                                onAddClick = onAddAnotherScan,
+                                onVisiblePageChange = { pageIndex: Int ->
+                                    currentPageInPageView = pageIndex
+                                }
+                            )
                         }
                     }
                 }
@@ -288,11 +302,7 @@ fun FinalReviewScreen(
                                 isSelectionModeActive = false
                                 selectedIndices = emptySet()
                             },
-                            onShare = {
-                                if (selectedIndices.isNotEmpty()) {
-                                    showShareSheet = true
-                                }
-                            }
+                            onShare = { if (selectedIndices.isNotEmpty()) showShareSheet = true }
                         )
                         isEditMode -> MainBottomMenu(
                             context = context,
@@ -311,13 +321,15 @@ fun FinalReviewScreen(
                             }
                         )
                         else -> EditBottomMenu(
-                            enabled = selectedIndex != null,
+                            context = context,
+                            viewMode = viewMode,
+                            markupEnabled = currentPageInPageView != null,
                             shareEnabled = bitmaps.isNotEmpty(),
                             onAdd = onAddAnotherScan,
-                            onMarkup = { isMarkupMode = true },
+                            onMarkup = { showMarkupSubMenu = true },
                             onShare = {
                                 if (bitmaps.isNotEmpty()) {
-                                    selectedIndices = bitmaps.indices.toSet() // Select all by default
+                                    selectedIndices = bitmaps.indices.toSet()
                                     showShareSheet = true
                                 }
                             }
@@ -334,9 +346,7 @@ fun FinalReviewScreen(
                 onSelectionChange = { newSelection -> selectedIndices = newSelection },
                 onDismiss = {
                     showShareSheet = false
-                    if (!isSelectionModeActive) {
-                        selectedIndices = emptySet()
-                    }
+                    if (!isSelectionModeActive) selectedIndices = emptySet()
                 },
                 onShareAsPdf = {
                     coroutineScope.launch {
@@ -371,6 +381,20 @@ fun FinalReviewScreen(
                 }
             )
         }
+
+        if (showMarkupSubMenu) {
+            MarkupSubMenuSheet(
+                context = context,
+                onDismiss = { showMarkupSubMenu = false },
+                onDrawClick = {
+                    showMarkupSubMenu = false
+                    currentPageInPageView?.let {
+                        selectedIndex = it
+                        isMarkupMode = true
+                    }
+                }
+            )
+        }
     }
 }
 
@@ -378,26 +402,48 @@ fun FinalReviewScreen(
 
 @Composable
 private fun MainBottomMenu(context: Context, bitmapsNotEmpty: Boolean, onEdit: () -> Unit, onSave: () -> Unit, onShare: () -> Unit) {
-    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+    Row(modifier = Modifier
+        .fillMaxWidth()
+        .padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
         ActionButton(icon = Icons.Default.Edit, text = "Editar", enabled = bitmapsNotEmpty, onClick = onEdit)
-        ActionButton(icon = Icons.Default.Description, text = "Word", onClick = { Toast.makeText(context, "Próximamente: Exportar a Word", Toast.LENGTH_SHORT).show() })
+        ActionButton(icon = Icons.Default.Description, text = "Word", onClick = { Toast.makeText(context, "Próximamente", Toast.LENGTH_SHORT).show() })
         ActionButton(icon = Icons.Default.Download, text = "Guardar", enabled = bitmapsNotEmpty, onClick = onSave)
         ActionButton(icon = Icons.Default.Share, text = "Compartir", enabled = bitmapsNotEmpty, onClick = onShare)
     }
 }
 
 @Composable
-private fun EditBottomMenu(enabled: Boolean, shareEnabled: Boolean, onAdd: () -> Unit, onMarkup: () -> Unit, onShare: () -> Unit) {
-    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+private fun EditBottomMenu(
+    context: Context,
+    viewMode: ViewMode,
+    markupEnabled: Boolean,
+    shareEnabled: Boolean,
+    onAdd: () -> Unit,
+    onMarkup: () -> Unit,
+    onShare: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
         ActionButton(icon = Icons.Default.Add, text = "Agregar", onClick = onAdd)
-        ActionButton(icon = Icons.Default.Brush, text = "Markup", enabled = enabled, onClick = onMarkup)
+        ActionButton(icon = Icons.Default.Edit, text = "Editar PDF", enabled = shareEnabled, onClick = { Toast.makeText(context, "Próximamente: Editar PDF", Toast.LENGTH_SHORT).show() })
         ActionButton(icon = Icons.Default.Share, text = "Compartir", enabled = shareEnabled, onClick = onShare)
+        ActionButton(icon = Icons.Default.Description, text = "Word", enabled = shareEnabled, onClick = { Toast.makeText(context, "Próximamente: Exportar a Word", Toast.LENGTH_SHORT).show() })
+        if (viewMode == ViewMode.PAGE) {
+            ActionButton(icon = Icons.Default.Brush, text = "Markup", enabled = markupEnabled, onClick = onMarkup)
+        }
     }
 }
 
 @Composable
 private fun SelectionBottomMenu(enabled: Boolean, onDelete: () -> Unit, onCollage: () -> Unit, onShare: () -> Unit) {
-    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+    Row(modifier = Modifier
+        .fillMaxWidth()
+        .padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
         ActionButton(icon = Icons.Default.Delete, text = "Eliminar", enabled = enabled, onClick = onDelete)
         ActionButton(icon = Icons.Default.AutoAwesomeMosaic, text = "Collage", enabled = enabled, onClick = onCollage)
         ActionButton(icon = Icons.Default.Share, text = "Compartir", enabled = enabled, onClick = onShare)
@@ -413,15 +459,7 @@ private fun ListView(bitmaps: List<Bitmap>, isSelectionModeActive: Boolean, sele
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 80.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        items(bitmaps.size) { index ->
-            BitmapListItem(
-                bitmap = bitmaps[index],
-                pageNumber = index + 1,
-                isSelected = if (isSelectionModeActive) index in selectedIndices else selectedIndex == index,
-                isSelectionModeActive = isSelectionModeActive,
-                onClick = { onItemClick(index) }
-            )
-        }
+        items(bitmaps.size) { index -> BitmapListItem(bitmaps[index], index + 1, if (isSelectionModeActive) index in selectedIndices else selectedIndex == index, isSelectionModeActive) { onItemClick(index) } }
         item { AddPageListItem(onClick = onAddClick) }
     }
 }
@@ -435,22 +473,26 @@ private fun GridView(bitmaps: List<Bitmap>, isSelectionModeActive: Boolean, sele
         verticalArrangement = Arrangement.spacedBy(16.dp),
         horizontalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        items(bitmaps.size) { index ->
-            BitmapGridItem(
-                bitmap = bitmaps[index],
-                pageNumber = index + 1,
-                isSelected = if (isSelectionModeActive) index in selectedIndices else selectedIndex == index,
-                isSelectionModeActive = isSelectionModeActive,
-                onClick = { onItemClick(index) }
-            )
-        }
+        items(bitmaps.size) { index -> BitmapGridItem(bitmaps[index], index + 1, if (isSelectionModeActive) index in selectedIndices else selectedIndex == index, isSelectionModeActive) { onItemClick(index) } }
         item { AddPageGridItem(onClick = onAddClick) }
     }
 }
 
 @Composable
-private fun PageView(bitmaps: List<Bitmap>, selectedIndex: Int?, onItemClick: (Int) -> Unit, onAddClick: () -> Unit) {
+private fun PageView(
+    bitmaps: List<Bitmap>,
+    onItemClick: (Int) -> Unit,
+    onAddClick: () -> Unit,
+    onVisiblePageChange: (Int) -> Unit
+) {
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(listState.firstVisibleItemIndex) {
+        onVisiblePageChange(listState.firstVisibleItemIndex)
+    }
+
     LazyColumn(
+        state = listState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(top = 16.dp, bottom = 80.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -467,7 +509,9 @@ private fun PageView(bitmaps: List<Bitmap>, selectedIndex: Int?, onItemClick: (I
             )
         }
         item {
-            Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
+            Box(modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
                 AddPageFullScreenItem(onClick = onAddClick)
             }
         }
@@ -475,15 +519,9 @@ private fun PageView(bitmaps: List<Bitmap>, selectedIndex: Int?, onItemClick: (I
 }
 
 
+// --- Elementos de UI (ListItem, GridItem, etc. - sin cambios) ---
 @Composable
-private fun BitmapListItem(
-    bitmap: Bitmap,
-    pageNumber: Int,
-    isSelected: Boolean,
-    isSelectionModeActive: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit
-) {
+private fun BitmapListItem(bitmap: Bitmap, pageNumber: Int, isSelected: Boolean, isSelectionModeActive: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val borderColor = if (isSelected && !isSelectionModeActive) Color(0xFF30D5C8) else Color.Transparent
     Box(
         modifier = modifier
@@ -522,16 +560,8 @@ private fun BitmapListItem(
         }
     }
 }
-
 @Composable
-private fun BitmapGridItem(
-    bitmap: Bitmap,
-    pageNumber: Int,
-    isSelected: Boolean,
-    isSelectionModeActive: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit
-) {
+private fun BitmapGridItem(bitmap: Bitmap, pageNumber: Int, isSelected: Boolean, isSelectionModeActive: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val borderColor = if (isSelected && !isSelectionModeActive) Color(0xFF30D5C8) else Color.Transparent
     Box(
         modifier = modifier
@@ -620,7 +650,6 @@ private fun AddPageGridItem(onClick: () -> Unit, modifier: Modifier = Modifier) 
         }
     }
 }
-
 @Composable
 private fun AddPageFullScreenItem(onClick: () -> Unit, modifier: Modifier = Modifier) {
     Box(
@@ -645,93 +674,34 @@ private fun AddPageFullScreenItem(onClick: () -> Unit, modifier: Modifier = Modi
     }
 }
 
-// --- Código de Markup, Share, y utilidades (con cambios en ShareBottomSheet) ---
-
-@Composable
-private fun SelectablePageThumbnail(
-    bitmap: Bitmap,
-    isSelected: Boolean,
-    onClick: () -> Unit
-) {
-    Box(
-        modifier = Modifier
-            .width(80.dp)
-            .aspectRatio(1f / 1.41f) // A4 aspect ratio
-            .clip(RoundedCornerShape(4.dp))
-            .border(
-                width = 2.dp,
-                color = if (isSelected) Color(0xFF30D5C8) else Color.Transparent,
-                shape = RoundedCornerShape(4.dp)
-            )
-            .clickable(onClick = onClick)
-    ) {
-        Image(
-            bitmap = bitmap.asImageBitmap(),
-            contentDescription = "Page thumbnail",
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize()
-        )
-        if (isSelected) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.4f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Check,
-                    contentDescription = "Selected",
-                    tint = Color.White,
-                    modifier = Modifier
-                        .size(32.dp)
-                        .background(Color(0xFF30D5C8), CircleShape)
-                        .padding(4.dp)
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun SelectablePagesRow(
-    bitmaps: List<Bitmap>,
-    selectedIndices: Set<Int>,
-    onSelectionChange: (Set<Int>) -> Unit
-) {
-    LazyRow(
-        contentPadding = PaddingValues(top = 8.dp, bottom = 16.dp, start = 16.dp, end = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        items(bitmaps.size) { index ->
-            SelectablePageThumbnail(
-                bitmap = bitmaps[index],
-                isSelected = index in selectedIndices,
-                onClick = {
-                    val newSelection = selectedIndices.toMutableSet()
-                    if (index in newSelection) {
-                        newSelection.remove(index)
-                    } else {
-                        newSelection.add(index)
-                    }
-                    onSelectionChange(newSelection)
-                }
-            )
-        }
-    }
-}
-
+// --- Paneles Deslizables (Share y Markup) ---
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ShareBottomSheet(
-    bitmaps: List<Bitmap>,
-    selectedIndices: Set<Int>,
-    onSelectionChange: (Set<Int>) -> Unit,
+private fun MarkupSubMenuSheet(
+    context: Context,
     onDismiss: () -> Unit,
-    onShareAsPdf: () -> Unit,
-    onShareImages: () -> Unit,
-    onSaveToGallery: () -> Unit
+    onDrawClick: () -> Unit
 ) {
+    val modalBottomSheetState = rememberModalBottomSheetState()
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = modalBottomSheetState,
+        containerColor = Color(0xFF2C2C2E)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text("Markup", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp, modifier = Modifier.padding(bottom = 8.dp))
+            ShareOption(icon = Icons.Default.Edit, text = "Firmar", onClick = { Toast.makeText(context, "Próximamente", Toast.LENGTH_SHORT).show() })
+            ShareOption(icon = Icons.Default.Draw, text = "Dibujar", onClick = onDrawClick)
+            ShareOption(icon = Icons.Default.WaterDrop, text = "Marca de Agua", onClick = { Toast.makeText(context, "Próximamente", Toast.LENGTH_SHORT).show() })
+            ShareOption(icon = Icons.Default.FormatColorText, text = "Agregar Texto", onClick = { Toast.makeText(context, "Próximamente", Toast.LENGTH_SHORT).show() })
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+    }
+}
+
+@Composable
+private fun ShareBottomSheet(bitmaps: List<Bitmap>, selectedIndices: Set<Int>, onSelectionChange: (Set<Int>) -> Unit, onDismiss: () -> Unit, onShareAsPdf: () -> Unit, onShareImages: () -> Unit, onSaveToGallery: () -> Unit) {
     val selectionCount = selectedIndices.size
     Box(
         modifier = Modifier
@@ -810,8 +780,6 @@ private fun ShareBottomSheet(
         }
     }
 }
-
-
 @Composable
 private fun ShareOption(icon: ImageVector, text: String, onClick: () -> Unit, enabled: Boolean = true) {
     Row(
@@ -829,11 +797,9 @@ private fun ShareOption(icon: ImageVector, text: String, onClick: () -> Unit, en
     }
 }
 
+// --- Pantalla de Dibujo y Herramientas (sin cambios) ---
 @Composable
-private fun MarkupScreen(
-    bitmap: Bitmap,
-    onMarkupComplete: (Bitmap) -> Unit
-) {
+private fun MarkupScreen(bitmap: Bitmap, onMarkupComplete: (Bitmap) -> Unit) {
     var paths by remember { mutableStateOf<List<Pair<Path, Stroke>>>(emptyList()) }
     var currentPath by remember { mutableStateOf(Path()) }
     var currentPathColor by remember { mutableStateOf(Color.Red) }
@@ -845,7 +811,6 @@ private fun MarkupScreen(
     Box(modifier = Modifier.fillMaxSize()) {
         androidx.compose.foundation.Canvas(modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 56.dp, vertical = 130.dp)
             .pointerInput(Unit) {
                 detectDragGestures(
                     onDragStart = { offset ->
@@ -853,9 +818,10 @@ private fun MarkupScreen(
                     },
                     onDrag = { change, _ ->
                         currentPath.lineTo(change.position.x, change.position.y)
-                        paths = paths
-                            .toMutableList()
-                            .apply { add(currentPath to Stroke(width = density.run { currentPathStrokeWidth.toPx() }, cap = StrokeCap.Round)) }
+                        paths = paths + (currentPath to Stroke(
+                            width = density.run { currentPathStrokeWidth.toPx() },
+                            cap = StrokeCap.Round
+                        ))
                     },
                     onDragEnd = {
                         currentPath = Path()
@@ -865,7 +831,8 @@ private fun MarkupScreen(
         ) {
             drawImage(
                 image = imageBitmap,
-                topLeft = Offset.Zero
+                topLeft = Offset.Zero,
+                alpha = 1f
             )
 
             paths.forEach { (path, stroke) ->
@@ -901,14 +868,8 @@ private fun MarkupScreen(
         }
     }
 }
-
 @Composable
-private fun MarkupToolbar(
-    onColorChanged: (Color) -> Unit,
-    onStrokeWidthChanged: (Dp) -> Unit,
-    onUndo: () -> Unit,
-    onConfirm: () -> Unit
-) {
+private fun MarkupToolbar(onColorChanged: (Color) -> Unit, onStrokeWidthChanged: (Dp) -> Unit, onUndo: () -> Unit, onConfirm: () -> Unit) {
     BottomAppBar(containerColor = Color(0xFF2C2C2E), contentColor = Color.White) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -922,7 +883,6 @@ private fun MarkupToolbar(
         }
     }
 }
-
 @Composable
 private fun ColorPicker(onColorSelected: (Color) -> Unit) {
     val colors = listOf(Color.Red, Color.Green, Color.Blue, Color.Yellow, Color.White, Color.Black)
@@ -949,7 +909,6 @@ private fun ColorPicker(onColorSelected: (Color) -> Unit) {
         }
     }
 }
-
 @Composable
 private fun StrokeWidthPicker(onStrokeWidthSelected: (Dp) -> Unit) {
     var strokeWidth by remember { mutableStateOf(5.dp) }
@@ -967,11 +926,8 @@ private fun StrokeWidthPicker(onStrokeWidthSelected: (Dp) -> Unit) {
     }
 }
 
-private fun captureBitmap(
-    width: Int,
-    height: Int,
-    content: DrawScope.() -> Unit
-): Bitmap {
+// --- Utilidades (sin cambios) ---
+private fun captureBitmap(width: Int, height: Int, content: DrawScope.() -> Unit): Bitmap {
     val imageBitmap = ImageBitmap(width, height)
     val canvas = androidx.compose.ui.graphics.Canvas(imageBitmap)
     val drawScope = CanvasDrawScope()
@@ -984,16 +940,8 @@ private fun captureBitmap(
     )
     return imageBitmap.asAndroidBitmap()
 }
-
-
 @Composable
-private fun ActionButton(
-    icon: ImageVector,
-    text: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    enabled: Boolean = true
-) {
+private fun ActionButton(icon: ImageVector, text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     Column(
         modifier = modifier
             .clickable(enabled = enabled, onClick = onClick)
@@ -1014,8 +962,6 @@ private fun ActionButton(
         )
     }
 }
-
-
 private fun shareUri(context: Context, uri: Uri, mimeType: String) {
     val shareIntent = Intent().apply {
         action = Intent.ACTION_SEND
@@ -1025,7 +971,6 @@ private fun shareUri(context: Context, uri: Uri, mimeType: String) {
     }
     context.startActivity(Intent.createChooser(shareIntent, "Compartir documento"))
 }
-
 private fun shareBitmapAsImage(context: Context, bitmap: Bitmap) {
     val cachePath = File(context.cacheDir, "images")
     cachePath.mkdirs()
@@ -1045,7 +990,6 @@ private fun shareBitmapAsImage(context: Context, bitmap: Bitmap) {
         shareUri(context, it, "image/png")
     }
 }
-
 private fun saveBitmapToGallery(context: Context, bitmap: Bitmap, displayName: String) {
     val contentValues = ContentValues().apply {
         put(MediaStore.MediaColumns.DISPLAY_NAME, "$displayName.png")
@@ -1076,7 +1020,6 @@ private fun saveBitmapToGallery(context: Context, bitmap: Bitmap, displayName: S
         Toast.makeText(context, "Error al guardar la imagen", Toast.LENGTH_SHORT).show()
     }
 }
-
 private fun createPdfFromBitmapsAndGetUri(context: Context, bitmaps: List<Bitmap>): Uri? {
     if (bitmaps.isEmpty()) return null
 
@@ -1107,7 +1050,6 @@ private fun createPdfFromBitmapsAndGetUri(context: Context, bitmaps: List<Bitmap
         pdfDocument.close()
     }
 }
-
 private fun createZipFromBitmapsAndGetUri(context: Context, bitmaps: List<Bitmap>, fileName: String = "documento.zip"): Uri? {
     if (bitmaps.isEmpty()) return null
 
@@ -1137,7 +1079,6 @@ private fun createZipFromBitmapsAndGetUri(context: Context, bitmaps: List<Bitmap
         return null
     }
 }
-
 private object AppPreferences {
     private const val PREFS_NAME = "scanner_prefs"
     private const val KEY_VIEW_MODE = "view_mode"
@@ -1154,6 +1095,71 @@ private object AppPreferences {
             ViewMode.valueOf(modeName ?: ViewMode.LIST.name)
         } catch (e: IllegalArgumentException) {
             ViewMode.LIST
+        }
+    }
+}
+
+// --- Stubs para el código colapsado ---
+@Composable
+private fun SelectablePageThumbnail(bitmap: Bitmap, isSelected: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .width(80.dp)
+            .aspectRatio(1f / 1.41f) // A4 aspect ratio
+            .clip(RoundedCornerShape(4.dp))
+            .border(
+                width = 2.dp,
+                color = if (isSelected) Color(0xFF30D5C8) else Color.Transparent,
+                shape = RoundedCornerShape(4.dp)
+            )
+            .clickable(onClick = onClick)
+    ) {
+        Image(
+            bitmap = bitmap.asImageBitmap(),
+            contentDescription = "Page thumbnail",
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize()
+        )
+        if (isSelected) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.4f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Check,
+                    contentDescription = "Selected",
+                    tint = Color.White,
+                    modifier = Modifier
+                        .size(32.dp)
+                        .background(Color(0xFF30D5C8), CircleShape)
+                        .padding(4.dp)
+                )
+            }
+        }
+    }
+}
+@Composable
+private fun SelectablePagesRow(bitmaps: List<Bitmap>, selectedIndices: Set<Int>, onSelectionChange: (Set<Int>) -> Unit) {
+    LazyRow(
+        contentPadding = PaddingValues(top = 8.dp, bottom = 16.dp, start = 16.dp, end = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        items(bitmaps.size) { index ->
+            SelectablePageThumbnail(
+                bitmap = bitmaps[index],
+                isSelected = index in selectedIndices,
+                onClick = {
+                    val newSelection = selectedIndices.toMutableSet()
+                    if (index in newSelection) {
+                        newSelection.remove(index)
+                    } else {
+                        newSelection.add(index)
+                    }
+                    onSelectionChange(newSelection)
+                }
+            )
         }
     }
 }
