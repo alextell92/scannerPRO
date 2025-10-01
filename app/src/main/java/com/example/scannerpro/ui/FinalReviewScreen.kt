@@ -107,6 +107,7 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
+import com.example.scannerpro.MarkUp.MarkupScreen
 
 
 private enum class ViewMode { LIST, GRID, PAGE }
@@ -399,6 +400,28 @@ fun FinalReviewScreen(
 }
 
 // --- Menús Inferiores ---
+@Composable
+private fun ActionButton(icon: ImageVector, text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
+    Column(
+        modifier = modifier
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = text,
+            tint = if (enabled) Color.White else Color.Gray,
+            modifier = Modifier.size(24.dp)
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = text,
+            fontSize = 12.sp,
+            color = if (enabled) Color.White else Color.Gray
+        )
+    }
+}
 
 @Composable
 private fun MainBottomMenu(context: Context, bitmapsNotEmpty: Boolean, onEdit: () -> Unit, onSave: () -> Unit, onShare: () -> Unit) {
@@ -797,171 +820,6 @@ private fun ShareOption(icon: ImageVector, text: String, onClick: () -> Unit, en
     }
 }
 
-// --- Pantalla de Dibujo y Herramientas (sin cambios) ---
-@Composable
-private fun MarkupScreen(bitmap: Bitmap, onMarkupComplete: (Bitmap) -> Unit) {
-    var paths by remember { mutableStateOf<List<Pair<Path, Stroke>>>(emptyList()) }
-    var currentPath by remember { mutableStateOf(Path()) }
-    var currentPathColor by remember { mutableStateOf(Color.Red) }
-    var currentPathStrokeWidth by remember { mutableStateOf(5.dp) }
-    val density = LocalDensity.current
-
-    val imageBitmap = remember(bitmap) { bitmap.asImageBitmap() }
-
-    Box(modifier = Modifier.fillMaxSize()) {
-        androidx.compose.foundation.Canvas(modifier = Modifier
-            .fillMaxSize()
-            .pointerInput(Unit) {
-                detectDragGestures(
-                    onDragStart = { offset ->
-                        currentPath.moveTo(offset.x, offset.y)
-                    },
-                    onDrag = { change, _ ->
-                        currentPath.lineTo(change.position.x, change.position.y)
-                        paths = paths + (currentPath to Stroke(
-                            width = density.run { currentPathStrokeWidth.toPx() },
-                            cap = StrokeCap.Round
-                        ))
-                    },
-                    onDragEnd = {
-                        currentPath = Path()
-                    }
-                )
-            }
-        ) {
-            drawImage(
-                image = imageBitmap,
-                topLeft = Offset.Zero,
-                alpha = 1f
-            )
-
-            paths.forEach { (path, stroke) ->
-                drawPath(
-                    path,
-                    color = currentPathColor,
-                    style = stroke
-                )
-            }
-        }
-
-        Column(modifier = Modifier.align(Alignment.BottomCenter)) {
-            MarkupToolbar(
-                onColorChanged = { currentPathColor = it },
-                onStrokeWidthChanged = { currentPathStrokeWidth = it },
-                onUndo = { paths = paths.dropLast(1) },
-                onConfirm = {
-                    val newBitmap = captureBitmap(
-                        width = imageBitmap.width,
-                        height = imageBitmap.height
-                    ) {
-                        drawImage(
-                            image = imageBitmap,
-                            topLeft = Offset.Zero
-                        )
-                        paths.forEach { (path, stroke) ->
-                            drawPath(path, color = currentPathColor, style = stroke)
-                        }
-                    }
-                    onMarkupComplete(newBitmap)
-                }
-            )
-        }
-    }
-}
-@Composable
-private fun MarkupToolbar(onColorChanged: (Color) -> Unit, onStrokeWidthChanged: (Dp) -> Unit, onUndo: () -> Unit, onConfirm: () -> Unit) {
-    BottomAppBar(containerColor = Color(0xFF2C2C2E), contentColor = Color.White) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(onClick = onUndo) { Icon(Icons.Default.Undo, "Deshacer") }
-            ColorPicker(onColorSelected = onColorChanged)
-            StrokeWidthPicker(onStrokeWidthSelected = onStrokeWidthChanged)
-            IconButton(onClick = onConfirm) { Icon(Icons.Default.Check, "Confirmar Markup") }
-        }
-    }
-}
-@Composable
-private fun ColorPicker(onColorSelected: (Color) -> Unit) {
-    val colors = listOf(Color.Red, Color.Green, Color.Blue, Color.Yellow, Color.White, Color.Black)
-    var selectedColor by remember { mutableStateOf(colors.first()) }
-
-    Row {
-        colors.forEach { color ->
-            Box(
-                modifier = Modifier
-                    .size(24.dp)
-                    .padding(2.dp)
-                    .clip(CircleShape)
-                    .background(color)
-                    .clickable {
-                        selectedColor = color
-                        onColorSelected(color)
-                    }
-                    .border(
-                        width = if (selectedColor == color) 2.dp else 0.dp,
-                        color = Color.White,
-                        shape = CircleShape
-                    )
-            )
-        }
-    }
-}
-@Composable
-private fun StrokeWidthPicker(onStrokeWidthSelected: (Dp) -> Unit) {
-    var strokeWidth by remember { mutableStateOf(5.dp) }
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("${strokeWidth.value.toInt()}pt", color = Color.White, fontSize = 12.sp)
-        Slider(
-            value = strokeWidth.value,
-            onValueChange = {
-                strokeWidth = it.dp
-                onStrokeWidthSelected(strokeWidth)
-            },
-            valueRange = 2f..20f,
-            modifier = Modifier.width(100.dp)
-        )
-    }
-}
-
-// --- Utilidades (sin cambios) ---
-private fun captureBitmap(width: Int, height: Int, content: DrawScope.() -> Unit): Bitmap {
-    val imageBitmap = ImageBitmap(width, height)
-    val canvas = androidx.compose.ui.graphics.Canvas(imageBitmap)
-    val drawScope = CanvasDrawScope()
-    drawScope.draw(
-        density = androidx.compose.ui.unit.Density(1f),
-        layoutDirection = androidx.compose.ui.unit.LayoutDirection.Ltr,
-        canvas = canvas,
-        size = androidx.compose.ui.geometry.Size(width.toFloat(), height.toFloat()),
-        block = content
-    )
-    return imageBitmap.asAndroidBitmap()
-}
-@Composable
-private fun ActionButton(icon: ImageVector, text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
-    Column(
-        modifier = modifier
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 4.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = text,
-            tint = if (enabled) Color.White else Color.Gray,
-            modifier = Modifier.size(24.dp)
-        )
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            text = text,
-            fontSize = 12.sp,
-            color = if (enabled) Color.White else Color.Gray
-        )
-    }
-}
 private fun shareUri(context: Context, uri: Uri, mimeType: String) {
     val shareIntent = Intent().apply {
         action = Intent.ACTION_SEND
