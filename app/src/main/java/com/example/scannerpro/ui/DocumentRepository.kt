@@ -1,3 +1,5 @@
+
+
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -20,9 +22,7 @@ import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import Document
-import DocumentWithPages
-import Page // <-- AÑADE ESTA IMPORTACIÓN
+
 
 
 // --- ENTIDADES DE LA BASE DE DATOS ---

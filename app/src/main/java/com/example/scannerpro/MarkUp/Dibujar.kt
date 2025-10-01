@@ -52,7 +52,7 @@ import androidx.compose.ui.unit.sp
 
 
 @Composable
- fun MarkupScreen(bitmap: Bitmap, onMarkupComplete: (Bitmap) -> Unit) {
+ public fun MarkupScreen(bitmap: Bitmap, onMarkupComplete: (Bitmap) -> Unit) {
     var paths by remember { mutableStateOf<List<Pair<Path, Stroke>>>(emptyList()) }
     var currentPath by remember { mutableStateOf(Path()) }
     var currentPathColor by remember { mutableStateOf(Color.Red) }

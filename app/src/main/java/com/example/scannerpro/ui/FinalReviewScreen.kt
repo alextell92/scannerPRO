@@ -12,7 +12,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -29,7 +28,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -57,14 +55,11 @@ import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material.icons.filled.WaterDrop
-import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -80,34 +75,25 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
-import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import com.example.scannerpro.Collage.CollageScreen
+import DocumentRepository
+import com.example.scannerpro.MarkUp.MarkupScreen
+import com.example.scannerpro.signature.SignatureScreen
 import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
-import com.example.scannerpro.MarkUp.MarkupScreen
 
 
 private enum class ViewMode { LIST, GRID, PAGE }
@@ -138,6 +124,7 @@ fun FinalReviewScreen(
     var bitmapsForCollage by remember { mutableStateOf<List<Bitmap>>(emptyList()) }
 
     var showMarkupSubMenu by remember { mutableStateOf(false) }
+    var isSignatureMode by remember { mutableStateOf(false) }
     var currentPageInPageView by remember { mutableStateOf<Int?>(if (bitmaps.isNotEmpty()) 0 else null) }
 
     Box(
@@ -153,6 +140,17 @@ fun FinalReviewScreen(
                         bitmaps = bitmaps.toMutableList().also { it[index] = newBitmap }
                         isMarkupMode = false
                     }
+                )
+            }
+        } else if (isSignatureMode) {
+            selectedIndex?.let { index ->
+                SignatureScreen(
+                    baseBitmap = bitmaps[index],
+                    onSignatureComplete = { newBitmap ->
+                        bitmaps = bitmaps.toMutableList().also { it[index] = newBitmap }
+                        isSignatureMode = false
+                    },
+                    onCancel = { isSignatureMode = false }
                 )
             }
         } else if (isCollageMode) {
@@ -393,6 +391,13 @@ fun FinalReviewScreen(
                         selectedIndex = it
                         isMarkupMode = true
                     }
+                },
+                onSignClick = {
+                    showMarkupSubMenu = false
+                    currentPageInPageView?.let {
+                        selectedIndex = it
+                        isSignatureMode = true
+                    }
                 }
             )
         }
@@ -400,28 +405,6 @@ fun FinalReviewScreen(
 }
 
 // --- Menús Inferiores ---
-@Composable
-private fun ActionButton(icon: ImageVector, text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
-    Column(
-        modifier = modifier
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 4.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = text,
-            tint = if (enabled) Color.White else Color.Gray,
-            modifier = Modifier.size(24.dp)
-        )
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            text = text,
-            fontSize = 12.sp,
-            color = if (enabled) Color.White else Color.Gray
-        )
-    }
-}
 
 @Composable
 private fun MainBottomMenu(context: Context, bitmapsNotEmpty: Boolean, onEdit: () -> Unit, onSave: () -> Unit, onShare: () -> Unit) {
@@ -704,7 +687,8 @@ private fun AddPageFullScreenItem(onClick: () -> Unit, modifier: Modifier = Modi
 private fun MarkupSubMenuSheet(
     context: Context,
     onDismiss: () -> Unit,
-    onDrawClick: () -> Unit
+    onDrawClick: () -> Unit,
+    onSignClick: () -> Unit
 ) {
     val modalBottomSheetState = rememberModalBottomSheetState()
     ModalBottomSheet(
@@ -714,7 +698,7 @@ private fun MarkupSubMenuSheet(
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text("Markup", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp, modifier = Modifier.padding(bottom = 8.dp))
-            ShareOption(icon = Icons.Default.Edit, text = "Firmar", onClick = { Toast.makeText(context, "Próximamente", Toast.LENGTH_SHORT).show() })
+            ShareOption(icon = Icons.Default.Edit, text = "Firmar", onClick = onSignClick)
             ShareOption(icon = Icons.Default.Draw, text = "Dibujar", onClick = onDrawClick)
             ShareOption(icon = Icons.Default.WaterDrop, text = "Marca de Agua", onClick = { Toast.makeText(context, "Próximamente", Toast.LENGTH_SHORT).show() })
             ShareOption(icon = Icons.Default.FormatColorText, text = "Agregar Texto", onClick = { Toast.makeText(context, "Próximamente", Toast.LENGTH_SHORT).show() })
@@ -819,6 +803,9 @@ private fun ShareOption(icon: ImageVector, text: String, onClick: () -> Unit, en
         Text(text, color = tint)
     }
 }
+
+
+// --- Utilidades (sin cambios) ---
 
 private fun shareUri(context: Context, uri: Uri, mimeType: String) {
     val shareIntent = Intent().apply {
@@ -1019,6 +1006,29 @@ private fun SelectablePagesRow(bitmaps: List<Bitmap>, selectedIndices: Set<Int>,
                 }
             )
         }
+    }
+}
+
+@Composable
+private fun ActionButton(icon: ImageVector, text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
+    Column(
+        modifier = modifier
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = text,
+            tint = if (enabled) Color.White else Color.Gray,
+            modifier = Modifier.size(24.dp)
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = text,
+            fontSize = 12.sp,
+            color = if (enabled) Color.White else Color.Gray
+        )
     }
 }
 

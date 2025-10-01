@@ -118,11 +118,27 @@ private const val KEY_VIEW_MODE = "key_view_mode"
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (OpenCVLoader.initLocal()) {
-            Log.d("OpenCV", "OpenCV se ha cargado exitosamente.")
+        if (OpenCVLoader.initDebug()) {
+            Log.d("OpenCV", "OpenCV se ha cargado exitosamente (initDebug).")
         } else {
-            Log.e("OpenCV", "¡Error al cargar OpenCV!")
+            Log.e("OpenCV", "initDebug falló — intentando carga manual de la lib.")
+            try {
+                System.loadLibrary("opencv_java4") // nombre típico; ajusta si usas otro
+                Log.d("OpenCV", "Cargada libopencv_java4 vía System.loadLibrary.")
+            } catch (e: UnsatisfiedLinkError) {
+                Log.e("OpenCV", "Carga manual falló", e)
+            }
         }
+
+
+        val libDir = applicationInfo.nativeLibraryDir
+        Log.d("OpenCV", "SUPPORTED_ABIS: ${android.os.Build.SUPPORTED_ABIS.joinToString()}")
+        Log.d("OpenCV", "nativeLibraryDir = $libDir")
+        val files = File(libDir).listFiles()?.joinToString { it.name } ?: "empty"
+        Log.d("OpenCV", "native libs at nativeLibraryDir: $files")
+
+
+
         enableEdgeToEdge()
         setContent {
             ScannerPROTheme {
