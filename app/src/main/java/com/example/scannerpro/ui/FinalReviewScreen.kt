@@ -1,3 +1,5 @@
+package com.example.scannerpro.ui
+
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
@@ -41,7 +43,6 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesomeMosaic
 import androidx.compose.material.icons.filled.Brush
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
 import androidx.compose.material.icons.filled.Delete
@@ -76,6 +77,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -85,9 +87,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
-import com.example.scannerpro.Collage.CollageScreen
-import DocumentRepository
-import com.example.scannerpro.MarkUp.MarkupScreen
+import com.example.scannerpro.collage.CollageScreen
+import com.example.scannerpro.markup.MarkupScreen
 import com.example.scannerpro.signature.SignatureScreen
 import kotlinx.coroutines.launch
 import java.io.File
@@ -131,7 +132,7 @@ fun FinalReviewScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF1C1C1E))
+            .background(Color(0xFF212121)) // Fondo consistente
     ) {
         if (isMarkupMode) {
             selectedIndex?.let { index ->
@@ -144,16 +145,15 @@ fun FinalReviewScreen(
                 )
             }
         } else if (isSignatureMode) {
-            selectedIndex?.let { index ->
-                SignatureScreen(
-                    baseBitmap = bitmaps[index],
-                    onSignatureComplete = { newBitmap ->
-                        bitmaps = bitmaps.toMutableList().also { it[index] = newBitmap }
-                        isSignatureMode = false
-                    },
-                    onCancel = { isSignatureMode = false }
-                )
-            }
+            SignatureScreen(
+                baseBitmaps = bitmaps,
+                initialPageIndex = selectedIndex ?: 0,
+                onSignatureComplete = { pageIndex, newBitmap ->
+                    bitmaps = bitmaps.toMutableList().also { it[pageIndex] = newBitmap }
+                    isSignatureMode = false
+                },
+                onCancel = { isSignatureMode = false }
+            )
         } else if (isCollageMode) {
             CollageScreen(
                 initialBitmaps = bitmapsForCollage,
@@ -501,24 +501,35 @@ private fun PageView(
     LazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(top = 16.dp, bottom = 80.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+        contentPadding = PaddingValues(vertical = 16.dp)
     ) {
         items(bitmaps.size) { index ->
-            Image(
-                bitmap = bitmaps[index].asImageBitmap(),
-                contentDescription = "Página ${index + 1}",
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
                     .padding(horizontal = 16.dp)
-                    .clickable { onItemClick(index) },
-                contentScale = ContentScale.Fit
-            )
+                    .fillMaxWidth()
+                    .shadow(4.dp, RoundedCornerShape(2.dp))
+                    .background(Color.White, RoundedCornerShape(2.dp))
+                    .clickable { onItemClick(index) }
+                    .padding(8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Image(
+                    bitmap = bitmaps[index].asImageBitmap(),
+                    contentDescription = "Página ${index + 1}",
+                    modifier = Modifier.fillMaxWidth(),
+                    contentScale = ContentScale.Fit
+                )
+            }
         }
         item {
-            Box(modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                contentAlignment = Alignment.Center
+            ) {
                 AddPageFullScreenItem(onClick = onAddClick)
             }
         }
