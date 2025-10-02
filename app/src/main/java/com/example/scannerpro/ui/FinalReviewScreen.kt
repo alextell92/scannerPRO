@@ -1,5 +1,6 @@
 package com.example.scannerpro.ui
 
+import DocumentRepository
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
@@ -10,6 +11,7 @@ import android.os.Build
 import android.provider.MediaStore
 import android.util.Log
 import android.widget.Toast
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -43,6 +45,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesomeMosaic
 import androidx.compose.material.icons.filled.Brush
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
 import androidx.compose.material.icons.filled.Delete
@@ -77,7 +80,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -87,8 +89,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
-import com.example.scannerpro.collage.CollageScreen
-import com.example.scannerpro.markup.MarkupScreen
+import com.example.scannerpro.Collage.CollageScreen
+import com.example.scannerpro.MarkUp.MarkupScreen
 import com.example.scannerpro.signature.SignatureScreen
 import kotlinx.coroutines.launch
 import java.io.File
@@ -485,6 +487,8 @@ private fun GridView(bitmaps: List<Bitmap>, isSelectionModeActive: Boolean, sele
     }
 }
 
+// CÓDIGO MODIFICADO: PageView con LazyColumn para un scroll fluido y natural.
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun PageView(
     bitmaps: List<Bitmap>,
@@ -495,39 +499,48 @@ private fun PageView(
     val listState = rememberLazyListState()
 
     LaunchedEffect(listState.firstVisibleItemIndex) {
-        onVisiblePageChange(listState.firstVisibleItemIndex)
+        if (listState.firstVisibleItemIndex < bitmaps.size) {
+            onVisiblePageChange(listState.firstVisibleItemIndex)
+        }
     }
 
     LazyColumn(
         state = listState,
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-        contentPadding = PaddingValues(vertical = 16.dp)
+        modifier = Modifier.fillMaxSize()
+
     ) {
-        items(bitmaps.size) { index ->
+        items(
+            count = bitmaps.size,
+            key = { index -> bitmaps[index] }
+        ) { index ->
             Box(
                 modifier = Modifier
-                    .padding(horizontal = 16.dp)
-                    .fillMaxWidth()
-                    .shadow(4.dp, RoundedCornerShape(2.dp))
-                    .background(Color.White, RoundedCornerShape(2.dp))
-                    .clickable { onItemClick(index) }
-                    .padding(8.dp),
+                    .fillParentMaxSize() // Cada item ocupa la pantalla completa
+                    .padding(bottom = 8.dp)
+                    .clickable { onItemClick(index) },
                 contentAlignment = Alignment.Center
             ) {
-                Image(
-                    bitmap = bitmaps[index].asImageBitmap(),
-                    contentDescription = "Página ${index + 1}",
-                    modifier = Modifier.fillMaxWidth(),
-                    contentScale = ContentScale.Fit
-                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.White)
+                ) {
+                    Image(
+                        bitmap = bitmaps[index].asImageBitmap(),
+                        contentDescription = "Página ${index + 1}",
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp), // Margen para la imagen
+                        contentScale = ContentScale.Fit
+                    )
+                }
             }
         }
         item {
             Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
+
+                    .padding( top = 6.dp, bottom = 6.dp),
                 contentAlignment = Alignment.Center
             ) {
                 AddPageFullScreenItem(onClick = onAddClick)
@@ -673,7 +686,7 @@ private fun AddPageFullScreenItem(onClick: () -> Unit, modifier: Modifier = Modi
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(200.dp)
+            .height(80.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(Color.DarkGray)
             .border(
@@ -685,9 +698,9 @@ private fun AddPageFullScreenItem(onClick: () -> Unit, modifier: Modifier = Modi
         contentAlignment = Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(Icons.Default.Add, "Añadir Página", tint = Color.Gray, modifier = Modifier.size(48.dp))
+            Icon(Icons.Default.Add, "Añadir Página", tint = Color.Gray, modifier = Modifier.size(45.dp))
             Spacer(modifier = Modifier.height(8.dp))
-            Text("Añadir Página", color = Color.Gray, fontSize = 16.sp)
+            Text("Añadir Página", color = Color.Gray, fontSize = 14.sp)
         }
     }
 }
