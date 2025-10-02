@@ -71,6 +71,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -108,24 +109,24 @@ fun FinalReviewScreen(
     onFinish: () -> Unit
 ) {
     var bitmaps by remember { mutableStateOf(initialBitmaps) }
-    var isMarkupMode by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
-    var viewMode by remember { mutableStateOf(AppPreferences.getViewMode(context)) }
-    var selectedIndex by remember { mutableStateOf<Int?>(if (bitmaps.isNotEmpty()) 0 else null) }
-    var isEditMode by remember { mutableStateOf(false) }
+    var viewMode by rememberSaveable { mutableStateOf(AppPreferences.getViewMode(context)) }
+    var selectedIndex by rememberSaveable { mutableStateOf<Int?>(if (bitmaps.isNotEmpty()) 0 else null) }
+    var isEditMode by rememberSaveable { mutableStateOf(false) }
 
-    var showShareSheet by remember { mutableStateOf(false) }
-    var isSelectionModeActive by remember { mutableStateOf(false) }
-    var selectedIndices by remember { mutableStateOf<Set<Int>>(emptySet()) }
+    var showShareSheet by rememberSaveable { mutableStateOf(false) }
+    var isSelectionModeActive by rememberSaveable { mutableStateOf(false) }
+    var selectedIndices by rememberSaveable { mutableStateOf<Set<Int>>(emptySet()) }
 
-    var isCollageMode by remember { mutableStateOf(false) }
+    var isCollageMode by rememberSaveable { mutableStateOf(false) }
     var bitmapsForCollage by remember { mutableStateOf<List<Bitmap>>(emptyList()) }
 
-    var showMarkupSubMenu by remember { mutableStateOf(false) }
-    var isSignatureMode by remember { mutableStateOf(false) }
-    var currentPageInPageView by remember { mutableStateOf<Int?>(if (bitmaps.isNotEmpty()) 0 else null) }
+    var showMarkupSubMenu by rememberSaveable { mutableStateOf(false) }
+    var isMarkupMode by rememberSaveable { mutableStateOf(false) }
+    var isSignatureMode by rememberSaveable { mutableStateOf(false) }
+    var currentPageInPageView by rememberSaveable { mutableStateOf<Int?>(if (bitmaps.isNotEmpty()) 0 else null) }
 
     Box(
         modifier = Modifier
