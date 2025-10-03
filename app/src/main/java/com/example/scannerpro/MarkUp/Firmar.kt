@@ -22,10 +22,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -35,12 +35,13 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Done
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -107,7 +108,6 @@ private val OffsetSaver = Saver<Offset, List<Float>>(
 @Parcelize
 private enum class SignatureMode : Parcelable { DRAWING, PLACING }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SignatureScreen(
     baseBitmaps: List<Bitmap>,
@@ -122,12 +122,12 @@ fun SignatureScreen(
         parcelableStrokes.map { stroke -> stroke.points.map { it.toOffset() } }
     }
 
-    // --- CAMBIO CLAVE: Lambda para añadir un trazo de forma segura ---
     val onAddStroke: (List<Offset>) -> Unit = { newStroke ->
         parcelableStrokes = parcelableStrokes + ParcelableStroke(newStroke.map { it.toParcelable() })
     }
 
     var strokeColor by rememberSaveable(stateSaver = ColorSaver) { mutableStateOf(Color.Black) }
+    var strokeWidth by rememberSaveable { mutableStateOf(5f) }
     var signatureBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
     var signatureOffset by rememberSaveable(stateSaver = OffsetSaver) { mutableStateOf(Offset.Zero) }
     var signatureScale by rememberSaveable { mutableStateOf(1f) }
@@ -148,9 +148,9 @@ fun SignatureScreen(
         }
     }
 
-    LaunchedEffect(mode, strokes, strokeColor) {
+    LaunchedEffect(mode, strokes, strokeColor, strokeWidth) {
         if (mode == SignatureMode.PLACING && signatureBitmap == null && strokes.any { it.isNotEmpty() }) {
-            signatureBitmap = captureSignature(strokes, strokeColor)
+            signatureBitmap = captureSignature(strokes, strokeColor, strokeWidth)
         }
     }
 
@@ -158,9 +158,11 @@ fun SignatureScreen(
         DrawingContent(
             strokes = strokes,
             strokeColor = strokeColor,
-            onAddStroke = onAddStroke, // Se pasa la nueva lambda
+            strokeWidth = strokeWidth,
+            onAddStroke = onAddStroke,
             onCancel = onCancel,
             onColorChange = { strokeColor = it },
+            onStrokeWidthChange = { strokeWidth = it },
             onUndo = {
                 if (parcelableStrokes.isNotEmpty()) {
                     parcelableStrokes = parcelableStrokes.dropLast(1)
@@ -197,39 +199,47 @@ fun SignatureScreen(
 private fun DrawingContent(
     strokes: List<List<Offset>>,
     strokeColor: Color,
+    strokeWidth: Float,
     onAddStroke: (List<Offset>) -> Unit,
     onCancel: () -> Unit,
     onColorChange: (Color) -> Unit,
+    onStrokeWidthChange: (Float) -> Unit,
     onUndo: () -> Unit,
     onClear: () -> Unit,
     onConfirm: () -> Unit
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFF1C1C1E))
-    ) {
-        Column(
+    Box(modifier = Modifier.fillMaxSize()) {
+        Row(
             modifier = Modifier
-                .weight(1f)
-                .padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+                .fillMaxSize()
+                .background(Color(0xFF1C1C1E))
         ) {
-            SignatureDrawingCanvas(
-                modifier = Modifier.weight(1f),
-                strokes = strokes,
-                strokeColor = strokeColor,
-                onAddStroke = onAddStroke // Se pasa la nueva lambda
-            )
-            Text(
-                text = "Firme formalmente y claramente",
-                color = Color.Gray,
-                modifier = Modifier.padding(top = 8.dp)
-            )
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                SignatureDrawingCanvas(
+                    modifier = Modifier.weight(1f),
+                    strokes = strokes,
+                    strokeColor = strokeColor,
+                    strokeWidth = strokeWidth,
+                    onAddStroke = onAddStroke
+                )
+                Text(
+                    text = "Firme formalmente y claramente",
+                    color = Color.Gray,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+            }
         }
         SignatureDrawingControlsVertical(
+            strokeColor = strokeColor,
+            strokeWidth = strokeWidth,
             onCancel = onCancel,
             onColorChange = onColorChange,
+            onStrokeWidthChange = onStrokeWidthChange,
             onUndo = onUndo,
             onClear = onClear,
             onConfirm = onConfirm
@@ -259,7 +269,8 @@ private fun PlacingContent(
             if (visibleItems.isEmpty()) initialPageIndex
             else {
                 val viewportCenter = (layoutInfo.viewportStartOffset + layoutInfo.viewportEndOffset) / 2
-                visibleItems.minByOrNull { abs((it.offset + it.size / 2) - viewportCenter) }?.index ?: initialPageIndex
+                visibleItems.minByOrNull { abs((it.offset + it.size / 2) - viewportCenter) }?.index
+                    ?: initialPageIndex
             }
         }
     }
@@ -285,7 +296,7 @@ private fun PlacingContent(
         LazyColumn(
             state = lazyListState,
             modifier = Modifier.fillMaxSize(),
-            userScrollEnabled = !isSignatureActive // bloquea scroll cuando la firma está activa
+            userScrollEnabled = !isSignatureActive
         ) {
             items(count = baseBitmaps.size) { index ->
                 val pageBitmap = baseBitmaps[index]
@@ -309,7 +320,6 @@ private fun PlacingContent(
         }
 
         signatureBitmap?.let { sigBmp ->
-            // Box que contiene la imagen de la firma con la lógica de arrastre mejorada
             Box(
                 modifier = Modifier
                     .align(Alignment.Center)
@@ -319,16 +329,11 @@ private fun PlacingContent(
                         translationX = signatureOffset.x,
                         translationY = signatureOffset.y
                     )
-                    // pointerInput robusto: forEachGesture + awaitPointerEventScope para capturar y consumir el gesto
                     .pointerInput(isSignatureActive) {
-                        // Un loop para cada gesto independiente (evita recrear listeners durante el gesto)
                         forEachGesture {
                             awaitPointerEventScope {
-                                // Esperamos el primer down
                                 val down = awaitFirstDown(requireUnconsumed = false)
-                                // Si no está activo, no procesamos arrastre aquí (evita interferir)
                                 if (!isSignatureActive) {
-                                    // esperar a que terminen los cambios para salir de este gesto
                                     var finish = false
                                     while (!finish) {
                                         val evt = awaitPointerEvent()
@@ -337,23 +342,18 @@ private fun PlacingContent(
                                     return@awaitPointerEventScope
                                 }
 
-                                // Iniciamos el arrastre: guardamos posición actual y un acumulador local
                                 var lastPos = down.position
-                                var acc = signatureOffset // leemos el offset actual al inicio del gesto
+                                var acc = signatureOffset
 
-                                // Consumir el down para que el parent (LazyColumn) no lo use.
                                 down.consumePositionChange()
 
-                                // Mientras el pointer esté presionado procesamos eventos
                                 var pointerStillDown = true
                                 while (pointerStillDown) {
                                     val event = awaitPointerEvent()
                                     val change = event.changes.firstOrNull() ?: continue
 
                                     if (!change.pressed) {
-                                        // el puntero se liberó -> final del gesto
                                         pointerStillDown = false
-                                        // marcar consumo final si hace falta
                                         change.consumePositionChange()
                                         break
                                     }
@@ -361,9 +361,7 @@ private fun PlacingContent(
                                     val pos = change.position
                                     val delta = pos - lastPos
                                     if (delta != Offset.Zero) {
-                                        // consumimos el cambio para que no lo maneje el parent
                                         change.consumePositionChange()
-                                        // acumulamos y notificamos
                                         acc += delta
                                         onOffsetChange(acc)
                                         lastPos = pos
@@ -377,7 +375,6 @@ private fun PlacingContent(
                     bitmap = sigBmp,
                     contentDescription = "Firma",
                     modifier = Modifier
-                        // Toggle de activación; indicación visual y touch-friendly
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null
@@ -414,9 +411,22 @@ private fun PlacingContent(
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onCancel) {
-                Icon(Icons.Default.Close, "Cancelar", tint = Color.White, modifier = Modifier.background(Color.Black.copy(alpha = 0.3f), CircleShape).padding(4.dp))
+                Icon(
+                    Icons.Default.Close,
+                    "Cancelar",
+                    tint = Color.White,
+                    modifier = Modifier
+                        .background(Color.Black.copy(alpha = 0.3f), CircleShape)
+                        .padding(4.dp)
+                )
             }
-            Text("Página ${currentPageIndex + 1}", color = Color.White, modifier = Modifier.background(Color.Black.copy(alpha = 0.3f), RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 4.dp))
+            Text(
+                "Página ${currentPageIndex + 1}",
+                color = Color.White,
+                modifier = Modifier
+                    .background(Color.Black.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            )
             IconButton(onClick = {
                 val finalBitmap = placeSignatureOnBitmap(
                     base = baseBitmaps[currentPageIndex],
@@ -427,7 +437,14 @@ private fun PlacingContent(
                 )
                 onSignatureComplete(currentPageIndex, finalBitmap)
             }) {
-                Icon(Icons.Default.Check, "Aplicar Firma", tint = Color(0xFF30D5C8), modifier = Modifier.background(Color.Black.copy(alpha = 0.3f), CircleShape).padding(4.dp))
+                Icon(
+                    Icons.Default.Check,
+                    "Aplicar Firma",
+                    tint = Color(0xFF30D5C8),
+                    modifier = Modifier
+                        .background(Color.Black.copy(alpha = 0.3f), CircleShape)
+                        .padding(4.dp)
+                )
             }
         }
     }
@@ -439,6 +456,7 @@ private fun SignatureDrawingCanvas(
     modifier: Modifier = Modifier,
     strokes: List<List<Offset>>,
     strokeColor: Color,
+    strokeWidth: Float,
     onAddStroke: (List<Offset>) -> Unit
 ) {
     var currentStroke by remember { mutableStateOf<List<Offset>>(emptyList()) }
@@ -450,15 +468,27 @@ private fun SignatureDrawingCanvas(
             .pointerInput(Unit) {
                 detectDragGestures(
                     onDragStart = { offset ->
-                        currentStroke = listOf(offset)
+                        if (offset.x in 0f..size.width.toFloat() && offset.y in 0f..size.height.toFloat()) {
+                            currentStroke = listOf(offset)
+                        }
                     },
                     onDrag = { change: PointerInputChange, _ ->
-                        currentStroke = currentStroke + change.position
-                        change.consumePositionChange()
+                        val position = change.position
+                        val isInside =
+                            position.x in 0f..size.width.toFloat() && position.y in 0f..size.height.toFloat()
+
+                        if (isInside) {
+                            currentStroke = currentStroke + position
+                        } else {
+                            if (currentStroke.isNotEmpty()) {
+                                onAddStroke(currentStroke)
+                                currentStroke = emptyList()
+                            }
+                        }
+                        change.consume()
                     },
                     onDragEnd = {
                         if (currentStroke.isNotEmpty()) {
-                            // --- CAMBIO CLAVE: Usar la nueva lambda segura ---
                             onAddStroke(currentStroke)
                         }
                         currentStroke = emptyList()
@@ -475,79 +505,171 @@ private fun SignatureDrawingCanvas(
                     moveTo(stroke.first().x, stroke.first().y)
                     stroke.subList(1, stroke.size).forEach { lineTo(it.x, it.y) }
                 }
-                drawPath(path, color = strokeColor, style = Stroke(width = 5f, cap = StrokeCap.Round))
+                drawPath(
+                    path,
+                    color = strokeColor,
+                    style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+                )
             }
         }
         if (currentStroke.size > 1) {
             val currentPath = Path().apply {
                 moveTo(currentStroke.first().x, currentStroke.first().y)
-                currentStroke.subList(1, currentStroke.size).forEach { lineTo(it.x, it.y) }
+                currentStroke
+                    .subList(1, currentStroke.size)
+                    .forEach { lineTo(it.x, it.y) }
             }
-            drawPath(currentPath, color = strokeColor, style = Stroke(width = 5f, cap = StrokeCap.Round))
+            drawPath(
+                currentPath,
+                color = strokeColor,
+                style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+            )
         }
     }
 }
 
 @Composable
 private fun SignatureDrawingControlsVertical(
+    strokeColor: Color,
+    strokeWidth: Float,
     onCancel: () -> Unit,
     onColorChange: (Color) -> Unit,
+    onStrokeWidthChange: (Float) -> Unit,
     onUndo: () -> Unit,
     onClear: () -> Unit,
     onConfirm: () -> Unit
 ) {
-    var selectedColor by rememberSaveable(stateSaver = ColorSaver) { mutableStateOf(Color.Black) }
-    val colors = listOf(Color.Black, Color(0xFF0D47A1), Color(0xFFB71C1C))
+    var showDrawingOptions by rememberSaveable { mutableStateOf(false) }
 
-    Column(
-        modifier = Modifier
-            .fillMaxHeight()
-            .background(Color(0xFF2C2C2E))
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.SpaceBetween
-    ) {
-        IconButton(onClick = onCancel) {
-            Icon(Icons.Default.Close, "Cancelar", tint = Color.White)
-        }
+    // Box principal para controlar la superposición (Z-index)
+    Box(modifier = Modifier.fillMaxSize()) {
 
-        Column(verticalArrangement = Arrangement.spacedBy(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            colors.forEach { color ->
-                Box(
-                    modifier = Modifier
-                        .size(32.dp)
-                        .clip(CircleShape)
-                        .background(color)
-                        .clickable {
-                            selectedColor = color
-                            onColorChange(color)
-                        }
-                        .border(
-                            width = if (selectedColor == color) 2.dp else 0.dp,
-                            color = Color.White,
-                            shape = CircleShape
-                        )
-                )
+        // Barra de controles principal, alineada a la derecha
+        Column(
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .fillMaxHeight()
+                .width(80.dp)
+                .background(Color(0xFF2C2C2E))
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            IconButton(onClick = onCancel) {
+                Icon(Icons.Default.Close, "Cancelar", tint = Color.White)
+            }
+
+            // Grupo de herramientas en el medio
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                IconButton(onClick = { showDrawingOptions = !showDrawingOptions }) {
+                    Icon(Icons.Default.Tune, "Opciones de Pincel", tint = Color.White)
+                }
+                IconButton(onClick = onUndo) {
+                    Icon(Icons.Default.Undo, "Deshacer", tint = Color.White)
+                }
+                IconButton(onClick = onClear) {
+                    Icon(Icons.Default.DeleteOutline, "Limpiar", tint = Color.White)
+                }
+            }
+
+
+            Button(
+                onClick = onConfirm,
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF30D5C8)),
+                shape = CircleShape,
+                modifier = Modifier.size(56.dp)
+            ) {
+                Icon(Icons.Default.Done, contentDescription = "Confirmar")
             }
         }
 
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            IconButton(onClick = onUndo) { Icon(Icons.Default.Undo, "Deshacer", tint = Color.White) }
-            IconButton(onClick = onClear) { Icon(Icons.Default.DeleteOutline, "Limpiar", tint = Color.White) }
-        }
-
-        Button(
-            onClick = onConfirm,
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF30D5C8)),
-            shape = CircleShape,
-            modifier = Modifier.size(56.dp)
-        ) {
-            Icon(Icons.Default.Done, contentDescription = "Confirmar")
+        // El popup y su fondo se dibujan encima de todo si están visibles
+        if (showDrawingOptions) {
+            DrawingOptionsPopup(
+                strokeColor = strokeColor,
+                strokeWidth = strokeWidth,
+                onColorChange = onColorChange,
+                onStrokeWidthChange = onStrokeWidthChange,
+                onDismiss = { showDrawingOptions = false }
+            )
         }
     }
 }
 
-private fun captureSignature(strokes: List<List<Offset>>, color: Color): ImageBitmap {
+@Composable
+private fun DrawingOptionsPopup(
+    strokeColor: Color,
+    strokeWidth: Float,
+    onColorChange: (Color) -> Unit,
+    onStrokeWidthChange: (Float) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val colors = listOf(Color.Black, Color(0xFF0D47A1), Color(0xFFB71C1C))
+
+    // Box que ocupa toda la pantalla para el fondo y la alineación del panel
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) { onDismiss() }
+            .background(Color.Black.copy(alpha = 0.5f)),
+        contentAlignment = Alignment.Center
+    ) {
+        // Panel de opciones
+        Column(
+            modifier = Modifier
+                .width(300.dp) // Ancho fijo para un look más compacto
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color(0xFF3A3A3C))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) {} // Evita que el clic se propague al fondo
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(24.dp)
+        ) {
+            Text("Opciones de Pincel", color = Color.White)
+
+            // Slider para el grosor
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("Grosor: ${strokeWidth.toInt()}", color = Color.LightGray)
+                Slider(
+                    value = strokeWidth,
+                    onValueChange = onStrokeWidthChange,
+                    valueRange = 2f..20f,
+                    steps = 8
+                )
+            }
+
+            // Fila de colores
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                colors.forEach { color ->
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .background(color)
+                            .clickable { onColorChange(color) }
+                            .border(
+                                width = if (strokeColor == color) 2.dp else 0.dp,
+                                color = Color.White,
+                                shape = CircleShape
+                            )
+                    )
+                }
+            }
+        }
+    }
+}
+
+
+private fun captureSignature(strokes: List<List<Offset>>, color: Color, strokeWidth: Float): ImageBitmap {
     val paths = strokes.mapNotNull { stroke ->
         if (stroke.size > 1) {
             Path().apply {
@@ -575,13 +697,15 @@ private fun captureSignature(strokes: List<List<Offset>>, color: Color): ImageBi
     if (left == Float.POSITIVE_INFINITY) return ImageBitmap(1, 1)
 
     val bounds = Rect(left, top, right, bottom)
-    val padding = 20f
-    val strokeWidth = 5f
-    val bitmapWidth = ((bounds.width + padding * 2 + strokeWidth).toInt()).coerceAtLeast(1)
-    val bitmapHeight = ((bounds.height + padding * 2 + strokeWidth).toInt()).coerceAtLeast(1)
+    val padding = strokeWidth * 4 // Aumentar padding para trazos gruesos
+    val bitmapWidth = ((bounds.width + padding * 2).toInt()).coerceAtLeast(1)
+    val bitmapHeight = ((bounds.height + padding * 2).toInt()).coerceAtLeast(1)
 
     return captureBitmap(bitmapWidth, bitmapHeight) {
-        translate(-bounds.left + padding + strokeWidth / 2f, -bounds.top + padding + strokeWidth / 2f) {
+        translate(
+            -bounds.left + padding,
+            -bounds.top + padding
+        ) {
             paths.forEach { path ->
                 drawPath(path, color = color, style = Stroke(width = strokeWidth, cap = StrokeCap.Round))
             }
@@ -599,7 +723,6 @@ private fun placeSignatureOnBitmap(
     if (signature == null) return base
 
     val pagePaddingPx = 16.dp.value
-    // The actual image is displayed within the padded Box. We need to account for this padding.
     val viewWidth = containerSize.width - (pagePaddingPx * 2)
     val viewHeight = containerSize.height - (pagePaddingPx * 2)
 
@@ -610,28 +733,24 @@ private fun placeSignatureOnBitmap(
     val viewAspectRatio = viewWidth / viewHeight
 
     if (bitmapAspectRatio > viewAspectRatio) {
-        // Bitmap is wider than the view, so it's constrained by width
         scaledBitmapWidth = viewWidth
         scaledBitmapHeight = viewWidth / bitmapAspectRatio
     } else {
-        // Bitmap is taller than or equal to the view aspect ratio, so it's constrained by height
         scaledBitmapHeight = viewHeight
         scaledBitmapWidth = viewHeight * bitmapAspectRatio
     }
 
-    // Calculate the offset of the displayed image within the full container
     val imageOffsetX = (containerSize.width - scaledBitmapWidth) / 2f
     val imageOffsetY = (containerSize.height - scaledBitmapHeight) / 2f
 
-    // Convert the signature's screen-center offset to an offset relative to the top-left of the container
     val signatureAbsoluteX = containerSize.width / 2f + signatureOffset.x
     val signatureAbsoluteY = containerSize.height / 2f + signatureOffset.y
 
-    // Calculate the signature's top-left position on the scaled bitmap
-    val signatureOnScaledBitmapX = signatureAbsoluteX - imageOffsetX - (signature.width * signatureScale / 2f)
-    val signatureOnScaledBitmapY = signatureAbsoluteY - imageOffsetY - (signature.height * signatureScale / 2f)
+    val signatureOnScaledBitmapX =
+        signatureAbsoluteX - imageOffsetX - (signature.width * signatureScale / 2f)
+    val signatureOnScaledBitmapY =
+        signatureAbsoluteY - imageOffsetY - (signature.height * signatureScale / 2f)
 
-    // Convert the position from the scaled bitmap dimensions to the original bitmap dimensions
     val scaleRatio = base.width / scaledBitmapWidth
     val finalX = signatureOnScaledBitmapX * scaleRatio
     val finalY = signatureOnScaledBitmapY * scaleRatio
