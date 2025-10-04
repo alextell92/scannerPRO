@@ -1,5 +1,6 @@
+package com.example.scannerpro.scanner
+
 import android.content.Context
-import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
@@ -69,9 +70,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
-import androidx.core.content.FileProvider
 import DocumentRepository
-import com.example.scannerpro.DocumentDatabase
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.scannerpro.ui.FinalReviewScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -85,68 +85,42 @@ import org.opencv.core.Point
 import org.opencv.core.Scalar
 import org.opencv.core.Size
 import org.opencv.imgproc.Imgproc
-import java.io.File
-import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.util.ArrayList
 import kotlin.math.abs
 import kotlin.math.pow
 import kotlin.math.sqrt
 
-data class DetectionResult(
-    val originalBitmap: Bitmap,
-    val cornerPoints: List<Point>
-)
+// External data classes and enums, making the Composable cleaner.
+data class DetectionResult(val originalBitmap: Bitmap, val cornerPoints: List<Point>)
+private enum class ProcessingMethod { STANDARD, CLAHE, MEDIAN_BLUR, MORPHOLOGICAL_CLOSE, ADAPTIVE_THRESHOLD, SPECULAR_REFLECTION, ADAPTIVE_MORPH }
+private enum class CropScreenState { CROP_PREVIEW, MANUAL_ADJUST }
+private enum class FilterType { NONE, SCANNER_LIGHT }
 
-private enum class ProcessingMethod {
-    STANDARD,
-    CLAHE,
-    MEDIAN_BLUR,
-    MORPHOLOGICAL_CLOSE,
-    ADAPTIVE_THRESHOLD,
-    SPECULAR_REFLECTION,
-    ADAPTIVE_MORPH
-}
-
-private enum class CropScreenState {
-    CROP_PREVIEW,
-    MANUAL_ADJUST
-}
-
-private enum class FilterType {
-    NONE,
-    SCANNER_LIGHT,
-}
-
-private enum class ScannerFlowState {
-    CAMERA,
-    EDITING,
-    FINAL_REVIEW
-}
 
 @Composable
 fun DocumentScannerScreen(
     documentIdToEdit: Long?,
-    onClose: () -> Unit
+    onClose: () -> Unit,
+    viewModel: DocumentScannerViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val lifecycleOwner = LocalLifecycleOwner.current
 
+    // Observe state from the ViewModel. This is lifecycle-aware and survives rotation.
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val scannedBitmaps = uiState.scannedBitmaps
+    val flowState = uiState.flowState
+    val isLoading = uiState.isLoading
+    val currentDocumentId = uiState.currentDocumentId
+
     val documentRepository = remember {
         DocumentRepository(context, DocumentDatabase.getDatabase(context).documentDao())
     }
 
-    // --- INICIO DE LA SOLUCIÓN DEFINITIVA ---
-    // Se usa `rememberSaveable` para que el estado de la navegación sobreviva
-    // a la recreación de la actividad (como los cambios de orientación).
-    var flowState by rememberSaveable { mutableStateOf(ScannerFlowState.CAMERA) }
-    // --- FIN DE LA SOLUCIÓN DEFINITIVA ---
-
-    var currentDocumentId by rememberSaveable { mutableStateOf(documentIdToEdit) }
-    var scannedBitmaps by remember { mutableStateOf<List<Bitmap>>(emptyList()) }
+    // UI-specific state that doesn't need to survive process death can remain here.
     var editingBitmapIndex by rememberSaveable { mutableStateOf<Int?>(null) }
-
     var detectionResult by remember { mutableStateOf<DetectionResult?>(null) }
     var croppedBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var editState by rememberSaveable { mutableStateOf(CropScreenState.CROP_PREVIEW) }
@@ -156,7 +130,6 @@ fun DocumentScannerScreen(
     var filterIntensity by rememberSaveable { mutableStateOf(1.1f) }
     var bitmapForProcessing by remember { mutableStateOf<Bitmap?>(null) }
 
-    var isLoading by remember { mutableStateOf(false) }
     var hasCamPermission by remember { mutableStateOf(false) }
     val imageCapture = remember { ImageCapture.Builder().build() }
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -166,14 +139,44 @@ fun DocumentScannerScreen(
     var isFlashOn by rememberSaveable { mutableStateOf(false) }
     var camera by remember { mutableStateOf<Camera?>(null) }
 
+    // Initial data loading effect
     LaunchedEffect(documentIdToEdit) {
-        if (documentIdToEdit != null) {
-            isLoading = true
-            scannedBitmaps = documentRepository.getDocumentPages(documentIdToEdit)
-            isLoading = false
-            flowState = ScannerFlowState.FINAL_REVIEW
+        if (documentIdToEdit != null && uiState.scannedBitmaps.isEmpty()) { // Avoids reloading data
+            viewModel.setLoading(true)
+            viewModel.setCurrentDocumentId(documentIdToEdit)
+            // Perform DB operations in a background thread
+            val bitmaps = withContext(Dispatchers.IO) {
+                documentRepository.getDocumentPages(documentIdToEdit)
+            }
+            viewModel.setScannedBitmaps(bitmaps)
+            viewModel.setLoading(false)
+            viewModel.setFlowState(ScannerFlowState.FINAL_REVIEW)
         }
     }
+
+    LaunchedEffect(key1 = true) {
+        permissionLauncher.launch(android.Manifest.permission.CAMERA)
+    }
+
+    // Effect to apply filters whenever the source bitmap or filter settings change
+    LaunchedEffect(croppedBitmap, selectedFilter, filterIntensity) {
+        if (croppedBitmap == null) {
+            filteredBitmap = null
+            return@LaunchedEffect
+        }
+        viewModel.setLoading(true)
+        withContext(Dispatchers.Default) {
+            val newFilteredBitmap = when (selectedFilter) {
+                FilterType.SCANNER_LIGHT -> applyScannerLightFilter(croppedBitmap!!, filterIntensity)
+                FilterType.NONE -> croppedBitmap
+            }
+            withContext(Dispatchers.Main) {
+                filteredBitmap = newFilteredBitmap
+                viewModel.setLoading(false)
+            }
+        }
+    }
+
 
     fun resetToCameraState() {
         detectionResult = null
@@ -183,40 +186,18 @@ fun DocumentScannerScreen(
         isAdjustingFilterIntensity = false
         bitmapForProcessing = null
         editingBitmapIndex = null
-        flowState = ScannerFlowState.CAMERA
-    }
-
-    LaunchedEffect(key1 = true) {
-        permissionLauncher.launch(android.Manifest.permission.CAMERA)
-    }
-
-    LaunchedEffect(croppedBitmap, selectedFilter, filterIntensity) {
-        if (croppedBitmap == null) {
-            filteredBitmap = null
-            return@LaunchedEffect
-        }
-        isLoading = true
-        withContext(Dispatchers.Default) {
-            val newFilteredBitmap = when (selectedFilter) {
-                FilterType.SCANNER_LIGHT -> applyScannerLightFilter(croppedBitmap!!, filterIntensity)
-                FilterType.NONE -> croppedBitmap
-            }
-            withContext(Dispatchers.Main) {
-                filteredBitmap = newFilteredBitmap
-                isLoading = false
-            }
-        }
+        viewModel.setFlowState(ScannerFlowState.CAMERA) // Use ViewModel to change state
     }
 
     fun runDetectionAndCrop(bitmapToProcess: Bitmap) {
-        isLoading = true
+        viewModel.setLoading(true)
         bitmapForProcessing = bitmapToProcess
         coroutineScope.launch(Dispatchers.Default) {
             var result = findBestSizeAndProcess(bitmapToProcess)
             var initialEditState = CropScreenState.CROP_PREVIEW
 
             if (result == null || result.cornerPoints.isEmpty()) {
-                Log.d("DocumentScanner", "Detección automática falló. Creando rectángulo genérico.")
+                Log.d("DocumentScanner", "Auto-detection failed. Creating default rectangle.")
                 val defaultPoints = getDefaultCornerPoints(bitmapToProcess, marginPercent = 0.2f)
                 result = DetectionResult(originalBitmap = bitmapToProcess, cornerPoints = defaultPoints)
                 initialEditState = CropScreenState.MANUAL_ADJUST
@@ -227,11 +208,11 @@ fun DocumentScannerScreen(
             launch(Dispatchers.Main) {
                 detectionResult = result
                 croppedBitmap = newCroppedBitmap
-                isLoading = false
+                viewModel.setLoading(false)
                 bitmapForProcessing = null
                 editState = initialEditState
-                selectedFilter = FilterType.SCANNER_LIGHT
-                flowState = ScannerFlowState.EDITING
+                selectedFilter = FilterType.SCANNER_LIGHT // Default to a useful filter
+                viewModel.setFlowState(ScannerFlowState.EDITING)
             }
         }
     }
@@ -281,18 +262,21 @@ fun DocumentScannerScreen(
                 when(editState) {
                     CropScreenState.CROP_PREVIEW -> {
                         filteredBitmap?.let {
-                            val bottomPadding = if (isAdjustingFilterIntensity) 160.dp else 140.dp
                             Box(modifier = Modifier.fillMaxSize().background(Color(0xFF1C1C1E)), contentAlignment = Alignment.Center) {
                                 Image(bitmap = it.asImageBitmap(), contentDescription = "Documento recortado", contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize().padding(horizontal = 56.dp, vertical = 130.dp))
                             }
                         }
                     }
                     CropScreenState.MANUAL_ADJUST -> {
-                        InteractiveDocumentView(
-                            bitmap = detectionResult!!.originalBitmap,
-                            initialPoints = detectionResult!!.cornerPoints,
-                            onPointsUpdated = { /* No se necesita en este flujo */ }
-                        )
+                        detectionResult?.let {
+                            InteractiveDocumentView(
+                                bitmap = it.originalBitmap,
+                                initialPoints = it.cornerPoints,
+                                onPointsUpdated = { updatedPoints ->
+                                    detectionResult = detectionResult?.copy(cornerPoints = updatedPoints)
+                                }
+                            )
+                        }
                     }
                 }
             }
@@ -310,36 +294,23 @@ fun DocumentScannerScreen(
                         croppedBitmap = bitmapToEdit
                         selectedFilter = FilterType.NONE
                         editingBitmapIndex = index
-                        flowState = ScannerFlowState.EDITING
+                        viewModel.setFlowState(ScannerFlowState.EDITING)
                     },
                     onFinish = { onClose() }
                 )
             }
         }
 
-        if (flowState == ScannerFlowState.CAMERA && hasCamPermission && flowState != ScannerFlowState.FINAL_REVIEW) {
+        if (flowState == ScannerFlowState.CAMERA && hasCamPermission) {
             val closeAction: () -> Unit = {
                 if (scannedBitmaps.isNotEmpty()) {
-                    flowState = ScannerFlowState.FINAL_REVIEW
+                    viewModel.setFlowState(ScannerFlowState.FINAL_REVIEW)
                 } else {
                     onClose()
                 }
             }
-            IconButton(
-                onClick = closeAction,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(16.dp)
-            )
-            {
-                Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = "Cerrar",
-                    tint = Color.White,
-                    modifier = Modifier
-                        .background(Color.Black.copy(alpha = 0.5f), CircleShape)
-                        .padding(8.dp)
-                )
+            IconButton(onClick = closeAction, modifier = Modifier.align(Alignment.TopStart).padding(16.dp)) {
+                Icon(Icons.Default.Close, "Cerrar", tint = Color.White, modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).padding(8.dp))
             }
             IconButton(onClick = { isFlashOn = !isFlashOn }, modifier = Modifier.align(Alignment.TopEnd).padding(16.dp)) {
                 Icon(if (isFlashOn) Icons.Default.FlashOn else Icons.Default.FlashOff, "Flash", tint = Color.White, modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).padding(8.dp))
@@ -359,7 +330,7 @@ fun DocumentScannerScreen(
                     IconButton(onClick = { takePhoto(context, imageCapture, isFlashOn, processBitmap) }, modifier = Modifier.size(72.dp)) {
                         Icon(Icons.Default.CameraAlt, "Tomar Foto", tint = Color.White, modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha=0.3f), CircleShape).padding(8.dp))
                     }
-                    Spacer(modifier = Modifier.size(40.dp))
+                    Spacer(modifier = Modifier.size(40.dp)) // To balance the layout
                 }
             }
             ScannerFlowState.EDITING -> {
@@ -373,18 +344,16 @@ fun DocumentScannerScreen(
                                 }
                             }
                         }
-                    } else {
-                        if (editState == CropScreenState.CROP_PREVIEW) {
-                            BottomAppBar(containerColor = Color(0xFF1C1C1E).copy(alpha = 0.8f), contentColor = Color.White, contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.height(80.dp)) {
-                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-                                    FilterActionButton(text = "Original", isSelected = selectedFilter == FilterType.NONE, onClick = { selectedFilter = FilterType.NONE })
-                                    FilterActionButton(text = "Luz Escáner", isSelected = selectedFilter == FilterType.SCANNER_LIGHT, onClick = {
-                                        if (selectedFilter == FilterType.SCANNER_LIGHT) isAdjustingFilterIntensity = true else {
-                                            selectedFilter = FilterType.SCANNER_LIGHT
-                                            filterIntensity = 1.1f
-                                        }
-                                    })
-                                }
+                    } else if (editState == CropScreenState.CROP_PREVIEW) {
+                        BottomAppBar(containerColor = Color(0xFF1C1C1E).copy(alpha = 0.8f), contentColor = Color.White, contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.height(80.dp)) {
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+                                FilterActionButton(text = "Original", isSelected = selectedFilter == FilterType.NONE, onClick = { selectedFilter = FilterType.NONE })
+                                FilterActionButton(text = "Luz Escáner", isSelected = selectedFilter == FilterType.SCANNER_LIGHT, onClick = {
+                                    if (selectedFilter == FilterType.SCANNER_LIGHT) isAdjustingFilterIntensity = true else {
+                                        selectedFilter = FilterType.SCANNER_LIGHT
+                                        filterIntensity = 1.1f
+                                    }
+                                })
                             }
                         }
                     }
@@ -399,30 +368,36 @@ fun DocumentScannerScreen(
                                     ActionButton(icon = Icons.Default.Check, text = "Ok", onClick = {
                                         coroutineScope.launch {
                                             filteredBitmap?.let { editedBitmap ->
-                                                isLoading = true
-                                                if (editingBitmapIndex != null) {
-                                                    documentRepository.updatePageInDocument(currentDocumentId!!, editingBitmapIndex!!, editedBitmap)
-                                                } else if (currentDocumentId != null) {
-                                                    documentRepository.addPageToDocument(currentDocumentId!!, editedBitmap)
+                                                viewModel.setLoading(true)
+                                                val finalDocId = if (currentDocumentId != null) {
+                                                    if (editingBitmapIndex != null) {
+                                                        documentRepository.updatePageInDocument(currentDocumentId, editingBitmapIndex!!, editedBitmap)
+                                                    } else {
+                                                        documentRepository.addPageToDocument(currentDocumentId, editedBitmap)
+                                                    }
+                                                    currentDocumentId
                                                 } else {
-                                                    currentDocumentId = documentRepository.createDocumentAndAddFirstPage(editedBitmap)
+                                                    documentRepository.createDocumentAndAddFirstPage(editedBitmap)
                                                 }
-                                                scannedBitmaps = documentRepository.getDocumentPages(currentDocumentId!!)
-                                                isLoading = false
-                                                flowState = ScannerFlowState.FINAL_REVIEW
+                                                viewModel.setCurrentDocumentId(finalDocId)
+                                                val updatedBitmaps = documentRepository.getDocumentPages(finalDocId)
+                                                viewModel.setScannedBitmaps(updatedBitmaps)
+                                                viewModel.setLoading(false)
+                                                viewModel.setFlowState(ScannerFlowState.FINAL_REVIEW)
                                             }
                                         }
                                     }, enabled = filteredBitmap != null && !isLoading)
                                 }
                                 CropScreenState.MANUAL_ADJUST -> {
+                                    ActionButton(icon = Icons.Default.Close, text = "Cancelar", onClick = { editState = CropScreenState.CROP_PREVIEW })
                                     ActionButton(icon = Icons.Default.AutoFixHigh, text = "Automático", onClick = { detectionResult?.originalBitmap?.let { runDetectionAndCrop(it) } })
                                     ActionButton(icon = Icons.Default.Check, text = "Aplicar", onClick = {
-                                        isLoading = true
+                                        viewModel.setLoading(true)
                                         coroutineScope.launch {
                                             val newCroppedBitmap = detectionResult?.let { withContext(Dispatchers.Default) { cropAndWarp(it.originalBitmap, it.cornerPoints) } }
                                             launch(Dispatchers.Main) {
                                                 croppedBitmap = newCroppedBitmap
-                                                isLoading = false
+                                                viewModel.setLoading(false)
                                                 editState = CropScreenState.CROP_PREVIEW
                                             }
                                         }
@@ -433,8 +408,7 @@ fun DocumentScannerScreen(
                     }
                 }
             }
-            ScannerFlowState.FINAL_REVIEW -> {
-            }
+            ScannerFlowState.FINAL_REVIEW -> { /* No UI elements in this state */ }
         }
 
         if (isLoading) {
@@ -443,11 +417,12 @@ fun DocumentScannerScreen(
     }
 }
 
+
 @Composable
 fun ProcessingAnimation(modifier: Modifier = Modifier, bitmap: Bitmap) {
-    val infiniteTransition = rememberInfiniteTransition()
-    val scanLinePosition by infiniteTransition.animateFloat(initialValue = -0.1f, targetValue = 1.1f, animationSpec = infiniteRepeatable(animation = tween(durationMillis = 2000, easing = LinearEasing), repeatMode = RepeatMode.Restart))
-    val dotAlpha by infiniteTransition.animateFloat(initialValue = 0.3f, targetValue = 1f, animationSpec = infiniteRepeatable(animation = tween(durationMillis = 700), repeatMode = RepeatMode.Reverse))
+    val infiniteTransition = rememberInfiniteTransition(label = "processing_animation")
+    val scanLinePosition by infiniteTransition.animateFloat(initialValue = -0.1f, targetValue = 1.1f, animationSpec = infiniteRepeatable(animation = tween(durationMillis = 2000, easing = LinearEasing), repeatMode = RepeatMode.Restart), label = "scan_line")
+    val dotAlpha by infiniteTransition.animateFloat(initialValue = 0.3f, targetValue = 1f, animationSpec = infiniteRepeatable(animation = tween(durationMillis = 700), repeatMode = RepeatMode.Reverse), label = "dot_alpha")
     Box(modifier = modifier.background(Color.Black.copy(alpha = 0.8f)).fillMaxSize(), contentAlignment = Alignment.Center) {
         Image(bitmap = bitmap.asImageBitmap(), contentDescription = "Procesando Imagen", contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize(), alpha = 0.4f)
         Canvas(modifier = Modifier.fillMaxSize()) {
@@ -592,7 +567,7 @@ private fun takePhoto(context: Context, imageCapture: ImageCapture, isFlashOn: B
             onPhotoTaken(rotatedBitmap)
             image.close()
         }
-        override fun onError(exception: ImageCaptureException) { println("Error taking photo: $exception") }
+        override fun onError(exception: ImageCaptureException) { Log.e("Camera", "Photo capture failed: ${exception.message}", exception) }
     })
 }
 
@@ -622,9 +597,7 @@ private fun applyScannerLightFilter(bitmap: Bitmap, contrast: Float): Bitmap {
     Core.merge(labPlanes, labMat)
     val resultMat = Mat()
     Imgproc.cvtColor(labMat, resultMat, Imgproc.COLOR_Lab2RGB)
-    val alpha = contrast.toDouble()
-    val beta = 10.0
-    resultMat.convertTo(resultMat, -1, alpha, beta)
+    resultMat.convertTo(resultMat, -1, contrast.toDouble(), 10.0)
     val resultBitmap = Bitmap.createBitmap(resultMat.cols(), resultMat.rows(), Bitmap.Config.ARGB_8888)
     Utils.matToBitmap(resultMat, resultBitmap)
     return resultBitmap
@@ -635,15 +608,15 @@ private fun findBestSizeAndProcess(sourceBitmap: Bitmap): DetectionResult? {
     var bestWidth = 0.0
     var maxQuads = -1
     var finalMethod = ProcessingMethod.STANDARD
-    val phases = listOf(ProcessingMethod.STANDARD, ProcessingMethod.CLAHE, ProcessingMethod.MEDIAN_BLUR, ProcessingMethod.MORPHOLOGICAL_CLOSE, ProcessingMethod.ADAPTIVE_THRESHOLD, ProcessingMethod.SPECULAR_REFLECTION, ProcessingMethod.ADAPTIVE_MORPH)
+    val phases = ProcessingMethod.values()
     for ((index, method) in phases.withIndex()) {
         if (maxQuads > 0) break
-        Log.d("ImageProcessing", "\n--- Iniciando Fase ${index + 1}: ${method.name} ---")
+        Log.d("ImageProcessing", "\n--- Starting Phase ${index + 1}: ${method.name} ---")
         finalMethod = method
         maxQuads = -1
         sizesToTest.forEach { width ->
             val quadCount = countQuadsAtWidth(sourceBitmap, width, method)
-            Log.d("ImageProcessing", "-> Prueba ${method.name} a ${width.toInt()}px: $quadCount cuadriláteros.")
+            Log.d("ImageProcessing", "-> Test ${method.name} at ${width.toInt()}px: $quadCount quads.")
             if (quadCount >= maxQuads) {
                 maxQuads = quadCount
                 bestWidth = width
@@ -651,10 +624,10 @@ private fun findBestSizeAndProcess(sourceBitmap: Bitmap): DetectionResult? {
         }
     }
     if (bestWidth == 0.0 || maxQuads <= 0) {
-        Log.d("ImageProcessing", "\nNo se encontraron cuadriláteros.")
+        Log.d("ImageProcessing", "\nNo quadrilaterals found.")
         return null
     } else {
-        Log.d("ImageProcessing", "\nMétodo exitoso: $finalMethod. Mejor tamaño: ${bestWidth.toInt()}px. Obteniendo puntos...")
+        Log.d("ImageProcessing", "\nSuccessful method: $finalMethod. Best size: ${bestWidth.toInt()}px. Getting points...")
     }
     val cornerPoints = detectQuadrilateralPoints(sourceBitmap, bestWidth, finalMethod)
     return if (cornerPoints.isNotEmpty()) {
@@ -715,7 +688,7 @@ private fun detectQuadrilateralPoints(sourceBitmap: Bitmap, optimalWidth: Double
         val contour2f = MatOfPoint2f(*contour.toArray())
         val approxCurve = MatOfPoint2f()
         Imgproc.approxPolyDP(contour2f, approxCurve, 0.02 * Imgproc.arcLength(contour2f, true), true)
-        if (approxCurve.total() == 4L && isGoodQuadrilateral(approxCurve) && area > maxArea) {
+        if (approxCurve.total() == 4L && Imgproc.isContourConvex(MatOfPoint(*approxCurve.toArray())) && area > maxArea) {
             maxArea = area
             largestQuad = MatOfPoint(*approxCurve.toArray())
         }
@@ -726,10 +699,13 @@ private fun detectQuadrilateralPoints(sourceBitmap: Bitmap, optimalWidth: Double
     } ?: emptyList()
 }
 
+
 private fun cropAndWarp(sourceBitmap: Bitmap, points: List<Point>): Bitmap {
+    if(points.size != 4) return sourceBitmap
     val sortedPoints = sortPoints(points)
     val srcMat = MatOfPoint2f().apply { fromList(sortedPoints) }
     val (width, height) = getOutputDimensions(sortedPoints)
+    if (width <= 0 || height <= 0) return sourceBitmap
     val dstMat = MatOfPoint2f(Point(0.0, 0.0), Point(width, 0.0), Point(width, height), Point(0.0, height))
     val perspectiveTransform = Imgproc.getPerspectiveTransform(srcMat, dstMat)
     val inputMat = Mat()
@@ -738,19 +714,24 @@ private fun cropAndWarp(sourceBitmap: Bitmap, points: List<Point>): Bitmap {
     Imgproc.warpPerspective(inputMat, outputMat, perspectiveTransform, Size(width, height))
     val resultBitmap = Bitmap.createBitmap(width.toInt(), height.toInt(), Bitmap.Config.ARGB_8888)
     Utils.matToBitmap(outputMat, resultBitmap)
-
-    if (resultBitmap.width > resultBitmap.height) {
-        return resultBitmap.rotate(90f)
-    }
-
-    return resultBitmap
+    return if (resultBitmap.width > resultBitmap.height) resultBitmap.rotate(90f) else resultBitmap
 }
 
 private fun sortPoints(points: List<Point>): List<Point> {
-    val sortedPoints = points.sortedWith(compareBy { it.y })
-    val topPoints = sortedPoints.subList(0, 2).sortedWith(compareBy { it.x })
-    val bottomPoints = sortedPoints.subList(2, 4).sortedWith(compareBy { it.x })
-    return listOf(topPoints[0], topPoints[1], bottomPoints[1], bottomPoints[0])
+    val center = Point(points.sumOf { it.x } / 4, points.sumOf { it.y } / 4)
+    return points.sortedWith { a, b ->
+        val angleA = kotlin.math.atan2(a.y - center.y, a.x - center.x)
+        val angleB = kotlin.math.atan2(b.y - center.y, b.x - center.x)
+        angleA.compareTo(angleB)
+    }.let {
+        // Ensure top-left is the first point
+        val tlIndex = it.minByOrNull { p -> p.x + p.y }?.let { tl -> it.indexOf(tl) } ?: 0
+        val rotated = mutableListOf<Point>()
+        for (i in 0..3) {
+            rotated.add(it[(tlIndex + i) % 4])
+        }
+        rotated
+    }
 }
 
 private fun getOutputDimensions(points: List<Point>): Pair<Double, Double> {
@@ -812,39 +793,11 @@ private fun countQuadsAtWidth(sourceBitmap: Bitmap, testWidth: Double, method: P
         val contour2f = MatOfPoint2f(*contour.toArray())
         val approxCurve = MatOfPoint2f()
         Imgproc.approxPolyDP(contour2f, approxCurve, 0.02 * Imgproc.arcLength(contour2f, true), true)
-        if (approxCurve.total() == 4L && isGoodQuadrilateral(approxCurve)) {
+        if (approxCurve.total() == 4L && Imgproc.isContourConvex(MatOfPoint(*approxCurve.toArray()))) {
             quadrilateralCount++
         }
     }
     return quadrilateralCount
-}
-
-private fun isGoodQuadrilateral(contour: MatOfPoint2f): Boolean {
-    val points = contour.toArray()
-    if (points.size != 4) return false
-    val matOfPoint = MatOfPoint(*points)
-    if (!Imgproc.isContourConvex(matOfPoint)) {
-        return false
-    }
-    val maxCosine = 0.3
-    for (i in 2..4) {
-        val pt1 = points[i % 4]
-        val pt2 = points[i - 2]
-        val pt0 = points[i - 1]
-        val dx1 = pt1.x - pt0.x
-        val dy1 = pt1.y - pt0.y
-        val dx2 = pt2.x - pt0.x
-        val dy2 = pt2.y - pt0.y
-        val dotProduct = dx1 * dx2 + dy1 * dy2
-        val magnitude1 = sqrt(dx1 * dx1 + dy1 * dy1)
-        val magnitude2 = sqrt(dx2 * dx2 + dy2 * dy2)
-        if (magnitude1 == 0.0 || magnitude2 == 0.0) return false
-        val cosine = abs(dotProduct / (magnitude1 * magnitude2))
-        if (cosine > maxCosine) {
-            return false
-        }
-    }
-    return true
 }
 
 private fun getDefaultCornerPoints(bitmap: Bitmap, marginPercent: Float = 0.2f): List<Point> {

@@ -71,7 +71,6 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerInputChange
-import androidx.compose.ui.input.pointer.consumePositionChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -132,21 +131,28 @@ fun SignatureScreen(
     var signatureOffset by rememberSaveable(stateSaver = OffsetSaver) { mutableStateOf(Offset.Zero) }
     var signatureScale by rememberSaveable { mutableStateOf(1f) }
 
-    val activity = LocalContext.current as Activity
-    DisposableEffect(Unit) {
-        val originalOrientation = activity.requestedOrientation
+    // --- MANEJO PROFESIONAL DEL CICLO DE VIDA DE LA ORIENTACIÓN ---
+    val activity = LocalContext.current as? Activity
+
+    // 1. DisposableEffect: Asegura que la orientación original se restaure SIEMPRE
+    //    al salir de esta pantalla, incluso si el usuario presiona "atrás".
+    DisposableEffect(activity) {
+        val originalOrientation = activity?.requestedOrientation
         onDispose {
-            activity.requestedOrientation = originalOrientation
+            activity?.requestedOrientation = originalOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
     }
 
-    LaunchedEffect(mode) {
-        activity.requestedOrientation = if (mode == SignatureMode.DRAWING) {
+    // 2. LaunchedEffect: Cambia la orientación de forma proactiva según el modo.
+    LaunchedEffect(activity, mode) {
+        activity?.requestedOrientation = if (mode == SignatureMode.DRAWING) {
             ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
         } else {
             ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
     }
+    // --- FIN DEL MANEJO PROFESIONAL ---
+
 
     LaunchedEffect(mode, strokes, strokeColor, strokeWidth) {
         if (mode == SignatureMode.PLACING && signatureBitmap == null && strokes.any { it.isNotEmpty() }) {
@@ -345,7 +351,7 @@ private fun PlacingContent(
                                 var lastPos = down.position
                                 var acc = signatureOffset
 
-                                down.consumePositionChange()
+                                down.consume()
 
                                 var pointerStillDown = true
                                 while (pointerStillDown) {
@@ -354,14 +360,14 @@ private fun PlacingContent(
 
                                     if (!change.pressed) {
                                         pointerStillDown = false
-                                        change.consumePositionChange()
+                                        change.consume()
                                         break
                                     }
 
                                     val pos = change.position
                                     val delta = pos - lastPos
                                     if (delta != Offset.Zero) {
-                                        change.consumePositionChange()
+                                        change.consume()
                                         acc += delta
                                         onOffsetChange(acc)
                                         lastPos = pos
@@ -421,21 +427,23 @@ private fun PlacingContent(
                 )
             }
             Text(
-                "Página ${currentPageIndex + 1}",
+                "Página ${currentPageIndex + 1} de ${baseBitmaps.size}",
                 color = Color.White,
                 modifier = Modifier
                     .background(Color.Black.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
                     .padding(horizontal = 8.dp, vertical = 4.dp)
             )
             IconButton(onClick = {
-                val finalBitmap = placeSignatureOnBitmap(
-                    base = baseBitmaps[currentPageIndex],
-                    signature = signatureBitmap,
-                    signatureOffset = signatureOffset,
-                    signatureScale = signatureScale,
-                    containerSize = containerSize
-                )
-                onSignatureComplete(currentPageIndex, finalBitmap)
+                if (baseBitmaps.isNotEmpty()) {
+                    val finalBitmap = placeSignatureOnBitmap(
+                        base = baseBitmaps[currentPageIndex],
+                        signature = signatureBitmap,
+                        signatureOffset = signatureOffset,
+                        signatureScale = signatureScale,
+                        containerSize = containerSize
+                    )
+                    onSignatureComplete(currentPageIndex, finalBitmap)
+                }
             }) {
                 Icon(
                     Icons.Default.Check,
@@ -786,4 +794,3 @@ private fun captureBitmap(
     )
     return imageBitmap
 }
-

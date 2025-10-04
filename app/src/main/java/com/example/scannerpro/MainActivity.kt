@@ -2,7 +2,6 @@
 
 package com.example.scannerpro
 
-import DocumentScannerScreen
 import DocumentWithPages
 import Document
 import Page
@@ -88,6 +87,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import coil.compose.AsyncImage // <-- NUEVO IMPORT (LIBRERÍA COIL)
+import com.example.scannerpro.scanner.DocumentScannerScreen
 import com.example.scannerpro.ui.HomeScreen
 import com.example.scannerpro.ui.HomeUiState
 import com.example.scannerpro.ui.HomeViewModel
