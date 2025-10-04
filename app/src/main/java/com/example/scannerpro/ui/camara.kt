@@ -48,6 +48,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -70,6 +71,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import DocumentRepository
+import com.example.scannerpro.DocumentDatabase
 import com.example.scannerpro.ui.FinalReviewScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -91,13 +93,11 @@ import kotlin.math.abs
 import kotlin.math.pow
 import kotlin.math.sqrt
 
-// Data class para el resultado de la detección. Separa la imagen de los puntos.
 data class DetectionResult(
     val originalBitmap: Bitmap,
     val cornerPoints: List<Point>
 )
 
-// Enum para controlar qué método de pre-procesamiento se utiliza (sin cambios)
 private enum class ProcessingMethod {
     STANDARD,
     CLAHE,
@@ -108,19 +108,16 @@ private enum class ProcessingMethod {
     ADAPTIVE_MORPH
 }
 
-// Enum para controlar el estado de la pantalla de recorte
 private enum class CropScreenState {
     CROP_PREVIEW,
     MANUAL_ADJUST
 }
 
-// Enum para los tipos de filtro de imagen
 private enum class FilterType {
     NONE,
     SCANNER_LIGHT,
 }
 
-// Enum para el flujo general de la pantalla
 private enum class ScannerFlowState {
     CAMERA,
     EDITING,
@@ -129,7 +126,7 @@ private enum class ScannerFlowState {
 
 @Composable
 fun DocumentScannerScreen(
-    documentIdToEdit: Long?, // NUEVO: ID del documento a editar, o null si es nuevo
+    documentIdToEdit: Long?,
     onClose: () -> Unit
 ) {
     val context = LocalContext.current
@@ -140,18 +137,23 @@ fun DocumentScannerScreen(
         DocumentRepository(context, DocumentDatabase.getDatabase(context).documentDao())
     }
 
-    var flowState by remember { mutableStateOf(ScannerFlowState.CAMERA) }
-    var currentDocumentId by remember { mutableStateOf(documentIdToEdit) }
+    // --- INICIO DE LA SOLUCIÓN DEFINITIVA ---
+    // Se usa `rememberSaveable` para que el estado de la navegación sobreviva
+    // a la recreación de la actividad (como los cambios de orientación).
+    var flowState by rememberSaveable { mutableStateOf(ScannerFlowState.CAMERA) }
+    // --- FIN DE LA SOLUCIÓN DEFINITIVA ---
+
+    var currentDocumentId by rememberSaveable { mutableStateOf(documentIdToEdit) }
     var scannedBitmaps by remember { mutableStateOf<List<Bitmap>>(emptyList()) }
-    var editingBitmapIndex by remember { mutableStateOf<Int?>(null) }
+    var editingBitmapIndex by rememberSaveable { mutableStateOf<Int?>(null) }
 
     var detectionResult by remember { mutableStateOf<DetectionResult?>(null) }
     var croppedBitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var editState by remember { mutableStateOf(CropScreenState.CROP_PREVIEW) }
-    var selectedFilter by remember { mutableStateOf(FilterType.NONE) }
+    var editState by rememberSaveable { mutableStateOf(CropScreenState.CROP_PREVIEW) }
+    var selectedFilter by rememberSaveable { mutableStateOf(FilterType.NONE) }
     var filteredBitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var isAdjustingFilterIntensity by remember { mutableStateOf(false) }
-    var filterIntensity by remember { mutableStateOf(1.1f) }
+    var isAdjustingFilterIntensity by rememberSaveable { mutableStateOf(false) }
+    var filterIntensity by rememberSaveable { mutableStateOf(1.1f) }
     var bitmapForProcessing by remember { mutableStateOf<Bitmap?>(null) }
 
     var isLoading by remember { mutableStateOf(false) }
@@ -161,10 +163,9 @@ fun DocumentScannerScreen(
         contract = ActivityResultContracts.RequestPermission(),
         onResult = { granted -> hasCamPermission = granted }
     )
-    var isFlashOn by remember { mutableStateOf(false) }
+    var isFlashOn by rememberSaveable { mutableStateOf(false) }
     var camera by remember { mutableStateOf<Camera?>(null) }
 
-    // Si recibimos un ID, cargamos el documento existente y saltamos a la revisión
     LaunchedEffect(documentIdToEdit) {
         if (documentIdToEdit != null) {
             isLoading = true
@@ -211,34 +212,24 @@ fun DocumentScannerScreen(
         isLoading = true
         bitmapForProcessing = bitmapToProcess
         coroutineScope.launch(Dispatchers.Default) {
-
-            // Intenta la detección automática
             var result = findBestSizeAndProcess(bitmapToProcess)
-
-            // Variable para decidir a qué pantalla ir
             var initialEditState = CropScreenState.CROP_PREVIEW
 
-            // ¡AQUÍ ESTÁ EL CAMBIO!
-            // Si la detección falla (resultado nulo o sin puntos), crea un resultado genérico
             if (result == null || result.cornerPoints.isEmpty()) {
                 Log.d("DocumentScanner", "Detección automática falló. Creando rectángulo genérico.")
-                val defaultPoints = getDefaultCornerPoints(bitmapToProcess, marginPercent = 0.2f) // 20% de margen
+                val defaultPoints = getDefaultCornerPoints(bitmapToProcess, marginPercent = 0.2f)
                 result = DetectionResult(originalBitmap = bitmapToProcess, cornerPoints = defaultPoints)
-
-                // Como la detección falló, forzamos al usuario a ajustar manualmente
                 initialEditState = CropScreenState.MANUAL_ADJUST
             }
 
-            // Procede a recortar con los puntos (automáticos o genéricos)
-            // Si la detección falló, esto recortará la imagen con el margen del 20%
             val newCroppedBitmap = result?.let { cropAndWarp(it.originalBitmap, it.cornerPoints) }
 
             launch(Dispatchers.Main) {
-                detectionResult = result // ¡Ahora 'detectionResult' NUNCA será nulo!
+                detectionResult = result
                 croppedBitmap = newCroppedBitmap
                 isLoading = false
                 bitmapForProcessing = null
-                editState = initialEditState // <--- Estado inicial (MANUAL_ADJUST si falló)
+                editState = initialEditState
                 selectedFilter = FilterType.SCANNER_LIGHT
                 flowState = ScannerFlowState.EDITING
             }
@@ -290,16 +281,10 @@ fun DocumentScannerScreen(
                 when(editState) {
                     CropScreenState.CROP_PREVIEW -> {
                         filteredBitmap?.let {
-                            // ########## INICIO DE CORRECCIÓN 1 ##########
-                            // Calcula el padding inferior dinámicamente
-                            // 80dp (slider) + 80dp (acciones) = 160dp
-                            // 60dp (filtros) + 80dp (acciones) = 140dp
                             val bottomPadding = if (isAdjustingFilterIntensity) 160.dp else 140.dp
-
                             Box(modifier = Modifier.fillMaxSize().background(Color(0xFF1C1C1E)), contentAlignment = Alignment.Center) {
                                 Image(bitmap = it.asImageBitmap(), contentDescription = "Documento recortado", contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize().padding(horizontal = 56.dp, vertical = 130.dp))
                             }
-                            // ########## FIN DE CORRECCIÓN 1 ##########
                         }
                     }
                     CropScreenState.MANUAL_ADJUST -> {
@@ -314,17 +299,14 @@ fun DocumentScannerScreen(
             ScannerFlowState.FINAL_REVIEW -> {
                 FinalReviewScreen(
                     initialBitmaps = scannedBitmaps,
-
                     repository = documentRepository,
                     onAddAnotherScan = { resetToCameraState() },
                     onEditRequest = { index ->
                         val bitmapToEdit = scannedBitmaps[index]
-
                         detectionResult = DetectionResult(
                             originalBitmap = bitmapToEdit,
                             cornerPoints = getDefaultCornerPoints(bitmapToEdit, 0.05f)
                         )
-
                         croppedBitmap = bitmapToEdit
                         selectedFilter = FilterType.NONE
                         editingBitmapIndex = index
@@ -335,35 +317,23 @@ fun DocumentScannerScreen(
             }
         }
 
-//        val closeAction = { onClose() }
-//        IconButton(onClick = closeAction, modifier = Modifier.align(Alignment.TopStart).padding(16.dp)) {
-//            Icon(Icons.Default.Close, "Cerrar", tint = Color.White, modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).padding(8.dp))
-//        }
-
         if (flowState == ScannerFlowState.CAMERA && hasCamPermission && flowState != ScannerFlowState.FINAL_REVIEW) {
-
-
             val closeAction: () -> Unit = {
-                // Si ya tenemos bitmaps escaneados (scannedBitmaps no está vacío),
-                // significa que venimos de "FinalReviewScreen". Debemos volver allí.
                 if (scannedBitmaps.isNotEmpty()) {
                     flowState = ScannerFlowState.FINAL_REVIEW
                 } else {
-                    // Si no hay bitmaps, es la primera vez que abrimos la cámara.
-                    // Salimos a "Home".
                     onClose()
                 }
             }
-
             IconButton(
-                onClick = closeAction, // onClose es el parámetro que ya recibe DocumentScannerScreen
+                onClick = closeAction,
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .padding(16.dp)
             )
             {
                 Icon(
-                    imageVector = Icons.Default.Close, // (Asegúrate de importar Icons.Default.Close)
+                    imageVector = Icons.Default.Close,
                     contentDescription = "Cerrar",
                     tint = Color.White,
                     modifier = Modifier
@@ -393,9 +363,7 @@ fun DocumentScannerScreen(
                 }
             }
             ScannerFlowState.EDITING -> {
-                // ########## INICIO DE CORRECCIÓN 2 ##########
                 Column(modifier = Modifier.align(Alignment.BottomCenter)) {
-                    // Esta sección (Slider o Filtros) se muestra en la parte SUPERIOR de la columna
                     if (isAdjustingFilterIntensity) {
                         BottomAppBar(containerColor = Color(0xFF1C1C1E).copy(alpha = 0.95f), contentColor = Color.White, contentPadding = PaddingValues(horizontal = 16.dp), modifier = Modifier.height(80.dp)) {
                             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -419,12 +387,8 @@ fun DocumentScannerScreen(
                                 }
                             }
                         }
-                        // La barra de acciones (abajo) se MOVIÓ FUERA de este bloque 'else'
                     }
 
-                    // Esta BottomAppBar (Acciones) AHORA ESTÁ FUERA del 'else',
-                    // por lo que se muestra SIEMPRE en el estado de EDICIÓN,
-                    // debajo del Slider o de los Filtros.
                     BottomAppBar(containerColor = Color(0xFF2C2C2E), contentColor = Color.White, modifier = Modifier.height(80.dp)) {
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
                             when (editState) {
@@ -468,13 +432,10 @@ fun DocumentScannerScreen(
                         }
                     }
                 }
-                // ########## FIN DE CORRECCIÓN 2 ##########
             }
             ScannerFlowState.FINAL_REVIEW -> {
-                // La barra de herramientas se gestiona dentro de FinalReviewScreen
             }
         }
-
 
         if (isLoading) {
             bitmapForProcessing?.let { ProcessingAnimation(modifier = Modifier.fillMaxSize(), bitmap = it) } ?: CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
@@ -482,8 +443,6 @@ fun DocumentScannerScreen(
     }
 }
 
-
-// Composable para la animación de carga que simula IA
 @Composable
 fun ProcessingAnimation(modifier: Modifier = Modifier, bitmap: Bitmap) {
     val infiniteTransition = rememberInfiniteTransition()
@@ -511,7 +470,6 @@ fun ProcessingAnimation(modifier: Modifier = Modifier, bitmap: Bitmap) {
     }
 }
 
-
 @Composable
 private fun ActionButton(icon: ImageVector, text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     Column(modifier = modifier.fillMaxHeight().clickable(enabled = enabled, onClick = onClick).padding(horizontal = 4.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
@@ -532,7 +490,6 @@ private fun FilterActionButton(text: String, isSelected: Boolean, onClick: () ->
         }
     }
 }
-
 
 @Composable
 fun InteractiveDocumentView(bitmap: Bitmap, initialPoints: List<Point>, onPointsUpdated: (List<Point>) -> Unit, modifier: Modifier = Modifier) {
@@ -613,8 +570,6 @@ fun InteractiveDocumentView(bitmap: Bitmap, initialPoints: List<Point>, onPoints
     }
 }
 
-
-
 @Composable
 private fun CameraPreview(modifier: Modifier = Modifier, onUseCase: (Preview) -> Unit) {
     AndroidView(modifier = modifier, factory = { context ->
@@ -626,7 +581,6 @@ private fun CameraPreview(modifier: Modifier = Modifier, onUseCase: (Preview) ->
         previewView
     })
 }
-
 
 private fun takePhoto(context: Context, imageCapture: ImageCapture, isFlashOn: Boolean, onPhotoTaken: (Bitmap) -> Unit) {
     imageCapture.flashMode = if (isFlashOn) ImageCapture.FLASH_MODE_ON else ImageCapture.FLASH_MODE_OFF
@@ -653,7 +607,6 @@ fun Bitmap.rotate(degrees: Float): Bitmap {
     val matrix = Matrix().apply { postRotate(degrees) }
     return Bitmap.createBitmap(this, 0, 0, width, height, matrix, true)
 }
-
 
 private fun applyScannerLightFilter(bitmap: Bitmap, contrast: Float): Bitmap {
     val srcMat = Mat()
@@ -894,25 +847,16 @@ private fun isGoodQuadrilateral(contour: MatOfPoint2f): Boolean {
     return true
 }
 
-
-/**
- * Crea una lista de puntos de esquina genéricos con un margen,
- * en caso de que la detección automática falle.
- */
 private fun getDefaultCornerPoints(bitmap: Bitmap, marginPercent: Float = 0.2f): List<Point> {
     val width = bitmap.width.toDouble()
     val height = bitmap.height.toDouble()
-
-    // Calcula el margen en píxeles
     val marginX = width * marginPercent
     val marginY = height * marginPercent
-
-    // Devuelve los 4 puntos: TL, TR, BR, BL
     return listOf(
-        Point(marginX, marginY), // Top-left
-        Point(width - marginX, marginY), // Top-right
-        Point(width - marginX, height - marginY), // Bottom-right
-        Point(marginX, height - marginY)  // Bottom-left
+        Point(marginX, marginY),
+        Point(width - marginX, marginY),
+        Point(width - marginX, height - marginY),
+        Point(marginX, height - marginY)
     )
 }
 

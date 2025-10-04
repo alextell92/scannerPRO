@@ -134,7 +134,7 @@ fun FinalReviewScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF212121)) // Fondo consistente
+            .background(Color(0xFF212121))
     ) {
         if (isMarkupMode) {
             selectedIndex?.let { index ->
@@ -147,15 +147,18 @@ fun FinalReviewScreen(
                 )
             }
         } else if (isSignatureMode) {
+            // --- INICIO DE LA SOLUCIÓN DEFINITIVA ---
+            // Se llama a SignatureScreen, que ahora contiene toda la lógica.
             SignatureScreen(
                 baseBitmaps = bitmaps,
-                initialPageIndex = selectedIndex ?: 0,
+                initialPageIndex = currentPageInPageView ?: selectedIndex ?: 0,
                 onSignatureComplete = { pageIndex, newBitmap ->
                     bitmaps = bitmaps.toMutableList().also { it[pageIndex] = newBitmap }
                     isSignatureMode = false
                 },
                 onCancel = { isSignatureMode = false }
             )
+            // --- FIN DE LA SOLUCIÓN DEFINITIVA ---
         } else if (isCollageMode) {
             CollageScreen(
                 initialBitmaps = bitmapsForCollage,
@@ -229,7 +232,6 @@ fun FinalReviewScreen(
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF2C2C2E))
                 )
 
-                // --- Vistas de contenido ---
                 Box(modifier = Modifier.weight(1f)) {
                     if (isEditMode && bitmaps.isNotEmpty()) {
                         val pagerState = rememberPagerState(initialPage = selectedIndex ?: 0) { bitmaps.size }
@@ -283,7 +285,6 @@ fun FinalReviewScreen(
                     }
                 }
 
-                // --- Menú inferior contextual ---
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
                     color = Color(0xFF2C2C2E),
@@ -390,14 +391,16 @@ fun FinalReviewScreen(
                 onDismiss = { showMarkupSubMenu = false },
                 onDrawClick = {
                     showMarkupSubMenu = false
-                    currentPageInPageView?.let {
+                    val pageToEdit = currentPageInPageView ?: selectedIndex ?: if (bitmaps.isNotEmpty()) 0 else null
+                    pageToEdit?.let {
                         selectedIndex = it
                         isMarkupMode = true
                     }
                 },
                 onSignClick = {
                     showMarkupSubMenu = false
-                    currentPageInPageView?.let {
+                    val pageToEdit = currentPageInPageView ?: selectedIndex ?: if (bitmaps.isNotEmpty()) 0 else null
+                    pageToEdit?.let {
                         selectedIndex = it
                         isSignatureMode = true
                     }
@@ -406,8 +409,6 @@ fun FinalReviewScreen(
         }
     }
 }
-
-// --- Menús Inferiores ---
 
 @Composable
 private fun MainBottomMenu(context: Context, bitmapsNotEmpty: Boolean, onEdit: () -> Unit, onSave: () -> Unit, onShare: () -> Unit) {
@@ -459,8 +460,6 @@ private fun SelectionBottomMenu(enabled: Boolean, onDelete: () -> Unit, onCollag
     }
 }
 
-// --- Vistas de Contenido ---
-
 @Composable
 private fun ListView(bitmaps: List<Bitmap>, isSelectionModeActive: Boolean, selectedIndices: Set<Int>, selectedIndex: Int?, onItemClick: (Int) -> Unit, onAddClick: () -> Unit) {
     LazyColumn(
@@ -487,7 +486,6 @@ private fun GridView(bitmaps: List<Bitmap>, isSelectionModeActive: Boolean, sele
     }
 }
 
-// CÓDIGO MODIFICADO: PageView con LazyColumn para un scroll fluido y natural.
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun PageView(
@@ -515,7 +513,7 @@ private fun PageView(
         ) { index ->
             Box(
                 modifier = Modifier
-                    .fillParentMaxSize() // Cada item ocupa la pantalla completa
+                    .fillParentMaxSize()
                     .padding(bottom = 8.dp)
                     .clickable { onItemClick(index) },
                 contentAlignment = Alignment.Center
@@ -530,7 +528,7 @@ private fun PageView(
                         contentDescription = "Página ${index + 1}",
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(16.dp), // Margen para la imagen
+                            .padding(16.dp),
                         contentScale = ContentScale.Fit
                     )
                 }
@@ -549,8 +547,6 @@ private fun PageView(
     }
 }
 
-
-// --- Elementos de UI (ListItem, GridItem, etc. - sin cambios) ---
 @Composable
 private fun BitmapListItem(bitmap: Bitmap, pageNumber: Int, isSelected: Boolean, isSelectionModeActive: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val borderColor = if (isSelected && !isSelectionModeActive) Color(0xFF30D5C8) else Color.Transparent
@@ -705,8 +701,6 @@ private fun AddPageFullScreenItem(onClick: () -> Unit, modifier: Modifier = Modi
     }
 }
 
-// --- Paneles Deslizables (Share y Markup) ---
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun MarkupSubMenuSheet(
@@ -828,9 +822,6 @@ private fun ShareOption(icon: ImageVector, text: String, onClick: () -> Unit, en
         Text(text, color = tint)
     }
 }
-
-
-// --- Utilidades (sin cambios) ---
 
 private fun shareUri(context: Context, uri: Uri, mimeType: String) {
     val shareIntent = Intent().apply {
@@ -969,13 +960,12 @@ private object AppPreferences {
     }
 }
 
-// --- Stubs para el código colapsado ---
 @Composable
 private fun SelectablePageThumbnail(bitmap: Bitmap, isSelected: Boolean, onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .width(80.dp)
-            .aspectRatio(1f / 1.41f) // A4 aspect ratio
+            .aspectRatio(1f / 1.41f)
             .clip(RoundedCornerShape(4.dp))
             .border(
                 width = 2.dp,
@@ -1056,3 +1046,4 @@ private fun ActionButton(icon: ImageVector, text: String, onClick: () -> Unit, m
         )
     }
 }
+
