@@ -92,10 +92,12 @@ import kotlin.math.max
 import kotlin.math.min
 
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
+import kotlin.math.absoluteValue
 import kotlin.math.roundToInt
 
 // --- Helpers to make state saveable ---
@@ -144,7 +146,8 @@ fun SignatureScreen(
     var strokeWidth by rememberSaveable { mutableStateOf(5f) }
     var signatureBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
     var signatureOffset by rememberSaveable(stateSaver = OffsetSaver) { mutableStateOf(Offset.Zero) }
-    var signatureScale by rememberSaveable { mutableStateOf(1f) }
+    var signatureScale by rememberSaveable { mutableStateOf(0f) }
+
 
     val activity = LocalContext.current as? Activity
     DisposableEffect(activity) {
@@ -260,6 +263,9 @@ private fun DrawingContent(
         )
     }
 }
+// ------------------ PlacingContent (actualizado) ------------------
+
+// ------------------ PlacingContent (actualizado) ------------------
 @Composable
 private fun PlacingContent(
     baseBitmaps: List<Bitmap>,
@@ -274,105 +280,120 @@ private fun PlacingContent(
     onSignatureComplete: (Int, Bitmap) -> Unit
 ) {
     val lazyListState = rememberLazyListState(initialFirstVisibleItemIndex = initialPageIndex)
-    val coroutineScope = rememberCoroutineScope()
+    val density = LocalDensity.current
 
-    val density = LocalDensity.current // <-- aqui
-
-    // Estado: posición absoluta en pantalla (overlay)
+    // guardamos por página y relativa (0..1)
+    var signaturePageIndex by rememberSaveable { mutableStateOf(initialPageIndex) }
+    var signatureRelative by rememberSaveable(stateSaver = OffsetSaver) { mutableStateOf(Offset(0.5f, 0.5f)) }
     var signatureScreenOffset by rememberSaveable(stateSaver = OffsetSaver) { mutableStateOf(signatureOffset) }
     var currentSignatureScale by rememberSaveable { mutableStateOf(signatureScale) }
 
     var isSignatureActive by rememberSaveable { mutableStateOf(false) }
+    var isInitialPosSet by remember { mutableStateOf(false) }
     var finalPageIndex by rememberSaveable { mutableStateOf(initialPageIndex) }
 
-    // Flag para posicionamiento inicial centrado (no queremos reubicación después de que el usuario mueva la firma)
-    var isInitialPosSet by remember { mutableStateOf(false) }
-
-    // Coordenadas del contenedor (usadas para auto-scroll)
     var containerCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    var containerIntSize by remember { mutableStateOf(IntSize(0, 0)) }
 
-    BoxWithConstraints(
+    // canal para auto-scroll (-ve = up, +ve = down, 0 = stop)
+    var scrollChannel by remember { mutableStateOf(0f) }
+
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xFF212121))
-            .onGloballyPositioned { containerCoords = it }
+            .onGloballyPositioned {
+                containerCoords = it
+                containerIntSize = IntSize(it.size.width, it.size.height)
+            }
     ) {
-        val containerSize = IntSize(constraints.maxWidth, constraints.maxHeight)
-        val viewHeight = constraints.maxHeight.toFloat()
-
-        var scrollChannel by remember { mutableStateOf(0f) }
-
-        // actor de scroll (mantengo tu approach)
-        LaunchedEffect(scrollChannel) {
-            if (scrollChannel != 0f) {
-                while (isActive) {
-                    lazyListState.scrollBy(scrollChannel)
-                    delay(10)
-                }
-            }
-        }
-
-        // Inicializar scale si se necesita (igual que antes)
-        LaunchedEffect(signatureBitmap, containerSize) {
-            if (signatureBitmap != null) {
-                if (currentSignatureScale == 0f) {
-                    val initialScale = (containerSize.width * 0.25f) / signatureBitmap.width
-                    currentSignatureScale = initialScale
-                    onScaleChange(initialScale)
-                }
-            }
-        }
-
-        // ===== NUEVO: centrar la firma en la página seleccionada la primera vez que aparece =====
-        LaunchedEffect(signatureBitmap, containerSize, finalPageIndex) {
-            if (signatureBitmap == null) return@LaunchedEffect
-            if (isInitialPosSet) return@LaunchedEffect
-            if (containerSize.width == 0 || containerSize.height == 0) return@LaunchedEffect
-            // Calculamos el rect de la página tal y como se muestra (mismo algoritmo que placeSignatureOnBitmap)
-            val base = baseBitmaps.getOrNull(finalPageIndex) ?: return@LaunchedEffect
-
-            // usa density para convertir dp -> px correctamente
+        // helper: tamaño escalado de la imagen dentro del contenedor
+        fun computeImageLayoutForPage(base: Bitmap): Pair<Float, Float> {
             val pagePaddingPx = with(density) { 16.dp.toPx() }
-            val viewWidth = containerSize.width - (pagePaddingPx * 2)
-            val viewHeightPx = containerSize.height - (pagePaddingPx * 2)
-
+            val viewWidth = (containerIntSize.width - (pagePaddingPx * 2)).coerceAtLeast(1f)
+            val viewHeight = (containerIntSize.height - (pagePaddingPx * 2)).coerceAtLeast(1f)
             val bitmapAspectRatio = base.width.toFloat() / base.height.toFloat()
-            val viewAspectRatio = viewWidth / viewHeightPx
-
-            val scaledBitmapWidth: Float
-            val scaledBitmapHeight: Float
-
-            if (bitmapAspectRatio > viewAspectRatio) {
-                scaledBitmapWidth = viewWidth
-                scaledBitmapHeight = viewWidth / bitmapAspectRatio
+            val viewAspectRatio = viewWidth / viewHeight
+            return if (bitmapAspectRatio > viewAspectRatio) {
+                Pair(viewWidth, viewWidth / bitmapAspectRatio)
             } else {
-                scaledBitmapHeight = viewHeightPx
-                scaledBitmapWidth = viewHeightPx * bitmapAspectRatio
+                Pair(viewHeight * bitmapAspectRatio, viewHeight)
             }
-
-            val imageOffsetX = (containerSize.width - scaledBitmapWidth) / 2f
-            val imageOffsetY = (containerSize.height - scaledBitmapHeight) / 2f
-
-            // Centro de la imagen de la página (en coordenadas del contenedor)
-            val pageCenterX = imageOffsetX + scaledBitmapWidth / 2f
-            val pageCenterY = imageOffsetY + scaledBitmapHeight / 2f
-
-            // Dimensiones dibujadas de la firma
-            val sigDrawWidth = signatureBitmap.width * currentSignatureScale
-            val sigDrawHeight = signatureBitmap.height * currentSignatureScale
-
-            // Queremos el top-left de la firma de modo que su centro coincida con pageCenter
-            val sigTopLeftX = pageCenterX - (sigDrawWidth / 2f)
-            val sigTopLeftY = pageCenterY - (sigDrawHeight / 2f)
-
-            // Actualizamos la posición absoluta en pantalla (offset de layout)
-            signatureScreenOffset = Offset(sigTopLeftX, sigTopLeftY)
-            onOffsetChange(signatureScreenOffset)
-
-            isInitialPosSet = true
         }
-        // =========================================================================================
 
+        // calcula offset absoluto (top-left) de la firma a partir de (pageIndex, relative)
+        fun computeAbsoluteOffsetFromRelative(pageIndex: Int, relative: Offset, signatureBmp: ImageBitmap?, sigScale: Float): Offset? {
+            val base = baseBitmaps.getOrNull(pageIndex) ?: return null
+            if (containerIntSize.width == 0 || containerIntSize.height == 0 || signatureBmp == null) return null
+            val (scaledW, scaledH) = computeImageLayoutForPage(base)
+            val imageLeft = (containerIntSize.width - scaledW) / 2f
+
+            val visibleItem = lazyListState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == pageIndex } ?: return null
+            val imageTop = visibleItem.offset + (containerIntSize.height - scaledH) / 2f
+
+            val centerX = imageLeft + relative.x * scaledW
+            val centerY = imageTop + relative.y * scaledH
+
+            val sigDrawW = signatureBmp.width * sigScale
+            val sigDrawH = signatureBmp.height * sigScale
+
+            val topLeftX = centerX - sigDrawW / 2f
+            val topLeftY = centerY - sigDrawH / 2f
+
+            return Offset(topLeftX, topLeftY)
+        }
+
+        // Recalcula pantalla -> aplica sólo cuando hay cambio significativo (>1px)
+        fun applyAbsoluteIfSignificant(newAbs: Offset) {
+            val dx = kotlin.math.abs(newAbs.x - signatureScreenOffset.x)
+            val dy = kotlin.math.abs(newAbs.y - signatureScreenOffset.y)
+            if (dx > 1f || dy > 1f) {
+                signatureScreenOffset = Offset(newAbs.x.roundToInt().toFloat(), newAbs.y.roundToInt().toFloat())
+                onOffsetChange(signatureScreenOffset)
+            }
+        }
+
+        // Auto-scroll job: ejecuta scrollBy mientras scrollChannel != 0
+        LaunchedEffect(scrollChannel) {
+            if (scrollChannel == 0f) return@LaunchedEffect
+            while (isActive && scrollChannel != 0f) {
+                // usa un paso moderado; ajusta la magnitud en DraggableSignature si quieres
+                lazyListState.scrollBy(scrollChannel)
+                delay(35) // 35ms para evitar micro-movimientos (≈28fps)
+            }
+        }
+
+        // Observa cambios de scroll / layout. NO sobrescribas mientras el usuario arrastra (isSignatureActive),
+        // salvo que estemos auto-scroll (scrollChannel != 0f) — en ese caso permitimos actualizar posiciones teóricas.
+        LaunchedEffect(lazyListState, isSignatureActive, containerIntSize, signatureBitmap, currentSignatureScale) {
+            snapshotFlow { Triple(lazyListState.firstVisibleItemIndex, lazyListState.firstVisibleItemScrollOffset, scrollChannel) }
+                .collect {
+                    // si estamos arrastrando y NO hay auto-scroll, no recalculamos (para evitar "pelea")
+                    if (isSignatureActive && scrollChannel == 0f) return@collect
+                    val newAbs = computeAbsoluteOffsetFromRelative(signaturePageIndex, signatureRelative, signatureBitmap, currentSignatureScale)
+                    if (newAbs != null) applyAbsoluteIfSignificant(newAbs)
+                }
+        }
+
+        // inicializar scale y posicion inicial centrada (una sola vez)
+        LaunchedEffect(signatureBitmap, containerIntSize) {
+            if (signatureBitmap == null) return@LaunchedEffect
+            if (!isInitialPosSet && containerIntSize.width > 0 && containerIntSize.height > 0) {
+                currentSignatureScale = if (currentSignatureScale == 0f)
+                    (containerIntSize.width * 0.18f) / signatureBitmap.width
+                else currentSignatureScale
+                onScaleChange(currentSignatureScale)
+                // centro relativo
+                signatureRelative = Offset(0.5f, 0.5f)
+                computeAbsoluteOffsetFromRelative(signaturePageIndex, signatureRelative, signatureBitmap, currentSignatureScale)?.let {
+                    signatureScreenOffset = Offset(it.x.roundToInt().toFloat(), it.y.roundToInt().toFloat())
+                    onOffsetChange(signatureScreenOffset)
+                }
+                isInitialPosSet = true
+            }
+        }
+
+        // LazyColumn
         LazyColumn(
             state = lazyListState,
             modifier = Modifier.fillMaxSize(),
@@ -386,9 +407,7 @@ private fun PlacingContent(
                         .padding(16.dp)
                         .pointerInput(isSignatureActive) {
                             detectTapGestures { _ ->
-                                if (isSignatureActive) {
-                                    isSignatureActive = false
-                                }
+                                if (isSignatureActive) isSignatureActive = false
                             }
                         },
                     contentAlignment = Alignment.Center
@@ -406,7 +425,7 @@ private fun PlacingContent(
             }
         }
 
-        // Overlay de la firma (usa offset en layout para que el hitbox siga la imagen)
+        // Overlay de la firma
         signatureBitmap?.let { sigBmp ->
             DraggableSignature(
                 sigBmp = sigBmp,
@@ -418,24 +437,61 @@ private fun PlacingContent(
                 onOffsetChange = { newOffset ->
                     signatureScreenOffset = newOffset
                     onOffsetChange(newOffset)
-                    // si el usuario mueve manualmente la firma, marcamos que ya no es "posición inicial"
-                    isInitialPosSet = true
+                },
+                onScaleChange = { newScale ->
+                    currentSignatureScale = newScale
+                    onScaleChange(newScale) // para propagar hacia arriba si el caller lo necesita
                 },
                 onDeleteSignature = onDeleteSignature,
-                onDragEnd = {
-                    // calcular la página aproximada donde quedó la firma (sin mover la firma)
-                    val finalSignatureCenterY = (viewHeight / 2f) + signatureScreenOffset.y
-                    val targetItem = lazyListState.layoutInfo.visibleItemsInfo.minByOrNull {
-                        abs((it.offset + it.size / 2) - finalSignatureCenterY)
+                onDragEnd = { finalLocalOffset ->
+                    // centro de la firma
+                    val sigDrawW = sigBmp.width * currentSignatureScale
+                    val sigDrawH = sigBmp.height * currentSignatureScale
+                    val centerX = finalLocalOffset.x + sigDrawW / 2f
+                    val centerY = finalLocalOffset.y + sigDrawH / 2f
+
+                    // items visibles del LazyList
+                    val visible = lazyListState.layoutInfo.visibleItemsInfo
+                    if (visible.isEmpty()) return@DraggableSignature
+
+                    // encontrar la página más cercana verticalmente
+                    val target = visible.minByOrNull { item ->
+                        val itemCenterY = item.offset + item.size / 2
+                        kotlin.math.abs(itemCenterY - centerY)
+                    } ?: visible.first()
+
+                    val pageIndex = target.index
+                    val base = baseBitmaps.getOrNull(pageIndex) ?: return@DraggableSignature
+
+                    // usa tu helper computeImageLayoutForPage() que ya usa `density` (capturado en la composición)
+                    val (scaledW, scaledH) = computeImageLayoutForPage(base)
+
+                    // left/top de la imagen dentro del contenedor (centrada horizontalmente y centrada vertical dentro del item)
+                    val imageLeft = (containerIntSize.width - scaledW) / 2f
+                    val imageTop = target.offset + (containerIntSize.height - scaledH) / 2f
+
+                    val relX = ((centerX - imageLeft) / scaledW).coerceIn(0f, 1f)
+                    val relY = ((centerY - imageTop) / scaledH).coerceIn(0f, 1f)
+
+                    signaturePageIndex = pageIndex
+                    signatureRelative = Offset(relX, relY)
+                    finalPageIndex = signaturePageIndex
+
+                    // recalcula y aplica offset absoluto (redondeado)
+                    val newAbs = computeAbsoluteOffsetFromRelative(signaturePageIndex, signatureRelative, signatureBitmap, currentSignatureScale)
+                    newAbs?.let {
+                        signatureScreenOffset = Offset(it.x.roundToInt().toFloat(), it.y.roundToInt().toFloat())
+                        onOffsetChange(signatureScreenOffset)
                     }
-                    targetItem?.let { finalPageIndex = it.index }
                 },
-                onAutoScroll = { scrollChannel = it },
+
+                onAutoScroll = { channelValue -> scrollChannel = channelValue },
                 modifier = Modifier.fillMaxSize()
             )
+
         }
 
-        // controles superiores
+        // controles superiores (igual que antes)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -459,10 +515,9 @@ private fun PlacingContent(
                         signature = signatureBitmap,
                         signatureOffset = signatureScreenOffset,
                         signatureScale = currentSignatureScale,
-                        containerSize = containerSize
+                        containerSize = containerIntSize
                     )
                     onSignatureComplete(finalPageIndex, finalBitmap)
-                    // opcional: onDeleteSignature() para quitar overlay después de aplicar
                 }
             }) {
                 Icon(Icons.Default.Check, "Aplicar Firma", tint = Color(0xFF30D5C8), modifier = Modifier.background(Color.Black.copy(alpha = 0.3f), CircleShape).padding(4.dp))
@@ -470,10 +525,11 @@ private fun PlacingContent(
         }
     }
 }
+// ------------------ Fin PlacingContent ------------------
 
 
 
-
+// ------------------ DraggableSignature (actualizado) ------------------
 @Composable
 private fun DraggableSignature(
     modifier: Modifier = Modifier,
@@ -484,83 +540,86 @@ private fun DraggableSignature(
     containerCoords: LayoutCoordinates?,
     onIsSignatureActiveChange: (Boolean) -> Unit,
     onOffsetChange: (Offset) -> Unit,
+    onScaleChange: (Float) -> Unit,            // <-- nuevo
     onDeleteSignature: () -> Unit,
-    onDragEnd: () -> Unit,
+    onDragEnd: (Offset) -> Unit,
     onAutoScroll: (Float) -> Unit
 ) {
-    // estado local para movimiento fluido en pantalla (overlay)
     var localOffset by remember { mutableStateOf(signatureOffset) }
     var isDragging by remember { mutableStateOf(false) }
+    var isResizing by remember { mutableStateOf(false) }
     var signatureLayoutCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
 
     val density = LocalDensity.current
-    // Calculamos tamaño de la imagen según el scale
     val imageWidthDp = with(density) { (sigBmp.width * signatureScale).toDp() }
     val imageHeightDp = with(density) { (sigBmp.height * signatureScale).toDp() }
 
-    // sincronizar desde el padre solo cuando NO estemos arrastrando
+    val minScale = 0.1f
+    val maxScale = 3f
+    var resizeInitialScale by remember { mutableStateOf(signatureScale) }
+
+    // sincronizar desde el padre sólo cuando NO estemos arrastrando ni redimensionando
     LaunchedEffect(signatureOffset) {
-        if (!isDragging) localOffset = signatureOffset
+        if (!isDragging && !isResizing) {
+            val dx = kotlin.math.abs(signatureOffset.x - localOffset.x)
+            val dy = kotlin.math.abs(signatureOffset.y - localOffset.y)
+            if (dx > 1f || dy > 1f) {
+                localOffset = Offset(signatureOffset.x.roundToInt().toFloat(), signatureOffset.y.roundToInt().toFloat())
+            }
+        }
     }
 
-    // Caja contenedora (overlay). La firma en sí está en su propio nodo de layout
+    // Si el padre cambia la escala (por ejemplo al iniciar), no lo sobreescribimos cuando estamos interactuando
+    LaunchedEffect(signatureScale) {
+        if (!isResizing) {
+            // no tocar localOffset aquí; la escala solo afecta tamaño dibujado (imageWidthDp/imageHeightDp)
+        }
+    }
+
     Box(modifier = modifier, contentAlignment = Alignment.TopStart) {
         Box(
             modifier = Modifier
-                // posicionamos con offset en layout (hitbox sigue al elemento)
                 .offset { IntOffset(localOffset.x.roundToInt(), localOffset.y.roundToInt()) }
                 .onGloballyPositioned { signatureLayoutCoords = it }
-                // damos tamaño acorde al scale
                 .then(Modifier.size(width = imageWidthDp, height = imageHeightDp))
-                // pointerInput SOBRE la caja de la firma (igual que Collage)
                 .pointerInput(sigBmp, signatureScale) {
                     awaitPointerEventScope {
                         while (true) {
                             val down = awaitFirstDown(requireUnconsumed = false)
-
-                            // activamos la firma inmediatamente (para deshabilitar scroll en parent)
                             if (!isSignatureActive) onIsSignatureActiveChange(true)
-
-                            // nos quedamos con el pointer
                             down.consume()
-
                             isDragging = true
-
-                            // bucle de drag basado en awaitDragOrCancellation (como en Collage)
                             var pointerId = down.id
                             while (true) {
                                 val dragChange = awaitDragOrCancellation(pointerId)
                                 if (dragChange == null) {
-                                    // pointer cancelado / up
                                     isDragging = false
                                     onAutoScroll(0f)
                                     onOffsetChange(localOffset)
-                                    onDragEnd()
+                                    onDragEnd(localOffset)
                                     break
                                 }
-
-                                // actualizamos la posición (delta en coordenadas del nodo)
                                 val delta = dragChange.positionChange()
-                                // positionChange ya está en px, aplicamos directamente al offset
-                                localOffset = localOffset + delta
+                                localOffset = Offset(
+                                    x = (localOffset.x + delta.x).roundToInt().toFloat(),
+                                    y = (localOffset.y + delta.y).roundToInt().toFloat()
+                                )
 
-                                // calculamos posición absoluta del pointer para auto-scroll
+                                // Auto-scroll: calculamos posición absoluta del puntero y si estamos cerca de borde pedimos scroll
                                 val absPointer = signatureLayoutCoords?.localToWindow(dragChange.position)
                                 val containerTop = containerCoords?.localToWindow(Offset.Zero)?.y ?: 0f
                                 val containerBottom = containerTop + (containerCoords?.size?.height ?: 0)
                                 if (absPointer != null && containerCoords != null) {
                                     val y = absPointer.y
                                     val zone = (containerBottom - containerTop) * 0.15f
-                                    onAutoScroll(
-                                        when {
-                                            y < containerTop + zone -> -30f
-                                            y > containerBottom - zone -> 30f
-                                            else -> 0f
-                                        }
-                                    )
+                                    when {
+                                        y < containerTop + zone -> onAutoScroll(-40f)
+                                        y > containerBottom - zone -> onAutoScroll(40f)
+                                        else -> onAutoScroll(0f)
+                                    }
                                 }
 
-                                // consumir para que el LazyColumn no haga scroll mientras arrastramos
+                                onOffsetChange(localOffset)
                                 dragChange.consume()
                                 pointerId = dragChange.id
                             }
@@ -577,6 +636,7 @@ private fun DraggableSignature(
                     .border(2.dp, if (isSignatureActive) Color(0xFF30D5C8) else Color.Transparent, RoundedCornerShape(4.dp))
             )
 
+            // Botón eliminar en top-start (igual que antes)
             if (isSignatureActive) {
                 IconButton(
                     onClick = onDeleteSignature,
@@ -589,10 +649,53 @@ private fun DraggableSignature(
                     Icon(Icons.Default.Close, "Eliminar Firma", tint = Color.White)
                 }
             }
+
+            // === Handle de redimensión en la esquina inferior-derecha ===
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .offset(x = 8.dp, y = 8.dp) // pequeño offset para que quede fuera del borde
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF414141))
+                    .pointerInput(sigBmp) {
+                        detectDragGestures(
+                            onDragStart = {
+                                isResizing = true
+                                resizeInitialScale = signatureScale
+                            },
+                            onDrag = { change, dragAmount ->
+                                // usamos el cambio horizontal para ajustar escala relativa al ancho del bitmap
+                                val delta = dragAmount.x + dragAmount.y / 2f
+                                // cálculo simple: delta / bitmapWidth -> change in scale
+                                val widthPx = sigBmp.width.toFloat()
+                                val newScale = (resizeInitialScale + (delta / max(1f, widthPx))).coerceIn(minScale, maxScale)
+                                // avisamos al padre para que actualice la escala y cause recomposición
+                                onScaleChange(newScale)
+                                change.consume()
+                            },
+                            onDragEnd = {
+                                isResizing = false
+                            },
+                            onDragCancel = {
+                                isResizing = false
+                            }
+                        )
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Tune,
+                    contentDescription = "Redimensionar",
+                    modifier = Modifier.size(16.dp),
+                    tint = Color.White
+                )
+            }
         }
     }
 }
 
+// ------------------ Fin DraggableSignature ------------------
 
 
 
@@ -890,13 +993,12 @@ private fun placeSignatureOnBitmap(
     val imageOffsetX = (containerSize.width - scaledBitmapWidth) / 2f
     val imageOffsetY = (containerSize.height - scaledBitmapHeight) / 2f
 
-    val signatureAbsoluteX = containerSize.width / 2f + signatureOffset.x
-    val signatureAbsoluteY = containerSize.height / 2f + signatureOffset.y
+    // signatureOffset es top-left absoluto en el contenedor
+    val signatureCenterX = signatureOffset.x + (signature.width * signatureScale / 2f)
+    val signatureCenterY = signatureOffset.y + (signature.height * signatureScale / 2f)
 
-    val signatureOnScaledBitmapX =
-        signatureAbsoluteX - imageOffsetX - (signature.width * signatureScale / 2f)
-    val signatureOnScaledBitmapY =
-        signatureAbsoluteY - imageOffsetY - (signature.height * signatureScale / 2f)
+    val signatureOnScaledBitmapX = signatureCenterX - imageOffsetX - (signature.width * signatureScale / 2f)
+    val signatureOnScaledBitmapY = signatureCenterY - imageOffsetY - (signature.height * signatureScale / 2f)
 
     val scaleRatio = base.width / scaledBitmapWidth
     val finalX = signatureOnScaledBitmapX * scaleRatio
