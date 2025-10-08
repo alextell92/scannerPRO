@@ -1,5 +1,6 @@
 package com.example.scannerpro.signature
 
+import android.R.attr.x
 import android.app.Activity
 import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
@@ -470,8 +471,9 @@ private fun PlacingContent(
                     val imageLeft = (containerIntSize.width - scaledW) / 2f
                     val imageTop = target.offset + (containerIntSize.height - scaledH) / 2f
 
-                    val relX = ((centerX - imageLeft) / scaledW).coerceIn(0f, 1f)
-                    val relY = ((centerY - imageTop) / scaledH).coerceIn(0f, 1f)
+// Simplemente calcula la posición relativa sin restricciones.
+                    val relX = (centerX - imageLeft) / scaledW
+                    val relY = (centerY - imageTop) / scaledH
 
                     signaturePageIndex = pageIndex
                     signatureRelative = Offset(relX, relY)
