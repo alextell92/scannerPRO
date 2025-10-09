@@ -1,4 +1,7 @@
 package com.example.scannerpro.signature
+import androidx.compose.material.icons.filled.CalendarToday
+import androidx.compose.material.icons.filled.Receipt // icono "sello" aproximado
+import androidx.compose.ui.unit.sp
 
 import android.R.attr.x
 import android.app.Activity
@@ -93,6 +96,12 @@ import kotlin.math.max
 import kotlin.math.min
 
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.material.Divider
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -132,12 +141,13 @@ fun SignatureScreen(
     onSignatureComplete: (Int, Bitmap) -> Unit,
     onCancel: () -> Unit
 ) {
-    var mode by rememberSaveable { mutableStateOf(SignatureMode.PLACING) } // ahora arrancamos mostrando páginas + menú
+    var mode by rememberSaveable { mutableStateOf(SignatureMode.PLACING) }
     var parcelableStrokes by rememberSaveable { mutableStateOf<List<ParcelableStroke>>(emptyList()) }
 
     val strokes = remember(parcelableStrokes) {
         parcelableStrokes.map { stroke -> stroke.points.map { it.toOffset() } }
     }
+
     val onAddStroke: (List<Offset>) -> Unit = { newStroke ->
         parcelableStrokes = parcelableStrokes + ParcelableStroke(newStroke.map { it.toParcelable() })
     }
@@ -148,86 +158,70 @@ fun SignatureScreen(
     var signatureOffset by rememberSaveable(stateSaver = OffsetSaver) { mutableStateOf(Offset.Zero) }
     var signatureScale by rememberSaveable { mutableStateOf(0f) }
 
-    // control para abrir/mostrar el composable de dibujo como modal
-    var showDrawingModal by remember { mutableStateOf(false) }
 
-    // (mantén tus DisposableEffect / LaunchedEffect tal cual están)
     val activity = LocalContext.current as? Activity
-    DisposableEffect(activity) { /* ...igual que antes... */ onDispose { /*...*/ } }
-    LaunchedEffect(activity, mode) { /* ...igual que antes... */ }
+    DisposableEffect(activity) {
+        val originalOrientation = activity?.requestedOrientation
+        onDispose {
+            activity?.requestedOrientation = originalOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+    }
 
-    // Si cerramos modal y hay trazos -> generar signatureBitmap automáticamente (igual que antes)
-    LaunchedEffect(showDrawingModal, strokes, strokeColor, strokeWidth) {
-        if (!showDrawingModal && strokes.any { it.isNotEmpty() }) {
+    LaunchedEffect(activity, mode) {
+        activity?.requestedOrientation = if (mode == SignatureMode.DRAWING) {
+            ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        } else {
+            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+    }
+
+    LaunchedEffect(mode, strokes, strokeColor, strokeWidth) {
+        if (mode == SignatureMode.PLACING && signatureBitmap == null && strokes.any { it.isNotEmpty() }) {
             signatureBitmap = captureSignature(strokes, strokeColor, strokeWidth)
         }
     }
 
-    // siempre mostramos PlacingContent (páginas) — y pasamos callbacks para abrir dibujo / fecha / OK
-    PlacingContent(
-        baseBitmaps = baseBitmaps,
-        initialPageIndex = initialPageIndex,
-        signatureBitmap = signatureBitmap,
-        signatureOffset = signatureOffset,
-        signatureScale = signatureScale,
-        onOffsetChange = { signatureOffset = it },
-        onScaleChange = { signatureScale = it },
-        onCancel = onCancel,
-        onDeleteSignature = {
-            parcelableStrokes = emptyList()
-            signatureBitmap = null
-            // quedamos en placing para que usuario pueda volver a elegir Firma
-        },
-        onSignatureComplete = onSignatureComplete,
-        onRequestDrawing = {
-            // abrir modal de dibujo
-            showDrawingModal = true
-        },
-        onRequestDate = {
-            // generar bitmap de fecha y setear como signatureBitmap (aparecerá centrada)
-            val dateText = java.text.SimpleDateFormat("dd/MM/yyyy", java.util.Locale.getDefault()).format(java.util.Date())
-            signatureBitmap = createDateBitmap(dateText)
-            // resetear posicion/scale para que aparezca centrada
-            signatureScale = 0f
-            signatureOffset = Offset.Zero
-        },
-        onOkFromMenu = {
-            // comportamiento igual que el ícono de check superior: aplicar la firma donde esté
-            // PlacingContent tiene acceso al containerSize etc. así que delegamos hacia la lógica ya existente.
-            // Aquí simplemente invocamos onSignatureComplete usando la misma lógica que tienes en el IconButton.
-            // Para simplicidad, PlacingContent llamará directamente a onSignatureComplete cuando el OK sea pulsado.
-        }
-    )
-
-    // si showDrawingModal -> mostramos DrawingContent encima (pantalla completa)
-    if (showDrawingModal) {
-        // Puedes usar Dialog o simplemente un Box sobrepuesto; aquí uso Box fullscreen para mantener tu lógica de landscape.
-        Box(modifier = Modifier.fillMaxSize().background(Color(0xDD000000)), contentAlignment = Alignment.Center) {
-            DrawingContent(
-                strokes = strokes,
-                strokeColor = strokeColor,
-                strokeWidth = strokeWidth,
-                onAddStroke = onAddStroke,
-                onCancel = {
-                    showDrawingModal = false
-                },
-                onColorChange = { strokeColor = it },
-                onStrokeWidthChange = { strokeWidth = it },
-                onUndo = {
-                    if (parcelableStrokes.isNotEmpty()) parcelableStrokes = parcelableStrokes.dropLast(1)
-                },
-                onClear = { parcelableStrokes = emptyList() },
-                onConfirm = {
-                    // cerrar modal: LaunchedEffect capturará strokes y generará signatureBitmap
-                    showDrawingModal = false
-                    // cambiamos a PLACING por si acaso
+    if (mode == SignatureMode.DRAWING) {
+        DrawingContent(
+            strokes = strokes,
+            strokeColor = strokeColor,
+            strokeWidth = strokeWidth,
+            onAddStroke = onAddStroke,
+            onCancel = onCancel,
+            onColorChange = { strokeColor = it },
+            onStrokeWidthChange = { strokeWidth = it },
+            onUndo = {
+                if (parcelableStrokes.isNotEmpty()) {
+                    parcelableStrokes = parcelableStrokes.dropLast(1)
+                }
+            },
+            onClear = { parcelableStrokes = emptyList() },
+            onConfirm = {
+                if (strokes.any { it.isNotEmpty() }) {
                     mode = SignatureMode.PLACING
                 }
-            )
-        }
+            }
+        )
+    } else { // PLACING mode
+        PlacingContent(
+            baseBitmaps = baseBitmaps,
+            initialPageIndex = initialPageIndex,
+            signatureBitmap = signatureBitmap,
+            signatureOffset = signatureOffset,
+            signatureScale = signatureScale,
+            onOffsetChange = { signatureOffset = it },
+            onScaleChange = { signatureScale = it },
+            onCancel = onCancel,
+            onDeleteSignature = {
+                parcelableStrokes = emptyList()
+                signatureBitmap = null
+                mode = SignatureMode.DRAWING
+            },
+            onSignatureComplete = onSignatureComplete,
+            onRequestDrawing = { mode = SignatureMode.DRAWING } // <-- nuevo
+        )
     }
 }
-
 
 @Composable
 private fun DrawingContent(
@@ -294,7 +288,8 @@ private fun PlacingContent(
     onScaleChange: (Float) -> Unit,
     onCancel: () -> Unit,
     onDeleteSignature: () -> Unit,
-    onSignatureComplete: (Int, Bitmap) -> Unit
+    onSignatureComplete: (Int, Bitmap) -> Unit,
+    onRequestDrawing: () -> Unit // <-- nuevo
 ) {
     val lazyListState = rememberLazyListState(initialFirstVisibleItemIndex = initialPageIndex)
     val density = LocalDensity.current
@@ -397,7 +392,7 @@ private fun PlacingContent(
             if (signatureBitmap == null) return@LaunchedEffect
             if (!isInitialPosSet && containerIntSize.width > 0 && containerIntSize.height > 0) {
                 currentSignatureScale = if (currentSignatureScale == 0f)
-                    (containerIntSize.width * 0.18f) / signatureBitmap.width
+                    (containerIntSize.width * 0.32f) / signatureBitmap.width
                 else currentSignatureScale
                 onScaleChange(currentSignatureScale)
                 // centro relativo
@@ -421,7 +416,7 @@ private fun PlacingContent(
                 Box(
                     modifier = Modifier
                         .fillParentMaxSize()
-                        .padding(16.dp)
+                        .padding(3.dp)
                         .pointerInput(isSignatureActive) {
                             detectTapGestures { _ ->
                                 if (isSignatureActive) isSignatureActive = false
@@ -540,7 +535,99 @@ private fun PlacingContent(
             }) {
                 Icon(Icons.Default.Check, "Aplicar Firma", tint = Color(0xFF30D5C8), modifier = Modifier.background(Color.Black.copy(alpha = 0.3f), CircleShape).padding(4.dp))
             }
+
+
         }
+        // Reemplaza tu Surface anterior por este (dentro del mismo Box donde está el resto)
+        // Surface pegado al fondo (sin espacio extra)
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.BottomCenter), // dentro del Box principal
+            color = Color(0xFF2C2C2E),
+            shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Divider(modifier = Modifier.fillMaxWidth(), color = Color(0xFF1B1B1B), thickness = 1.dp)
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    // Firma: icono arriba, texto abajo
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .width(64.dp)
+                            .clickable { onRequestDrawing() } // mantiene la interacción
+                            .padding(vertical = 4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Receipt,
+                            contentDescription = "Firma (sello)",
+                            modifier = Modifier.size(28.dp),
+                            tint = Color.White
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text("Firma", color = Color.White, fontSize = 12.sp)
+                    }
+
+                    // Fecha: icono arriba, texto abajo
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .width(64.dp)
+                            .clickable {
+                                // placeholder: aquí puedes abrir picker o crear el stamp de fecha
+                            }
+                            .padding(vertical = 4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CalendarToday,
+                            contentDescription = "Fecha (calendario)",
+                            modifier = Modifier.size(28.dp),
+                            tint = Color.White
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text("Fecha", color = Color.White, fontSize = 12.sp)
+                    }
+
+                    Spacer(modifier = Modifier.weight(1f))
+
+                    // Botón Aceptar: botón verde circular con solo la paloma (check)
+                    Button(
+                        onClick = {
+                            if (baseBitmaps.isNotEmpty() && signatureBitmap != null) {
+                                val finalBitmap = placeSignatureOnBitmap(
+                                    base = baseBitmaps[finalPageIndex],
+                                    signature = signatureBitmap,
+                                    signatureOffset = signatureScreenOffset,
+                                    signatureScale = currentSignatureScale,
+                                    containerSize = containerIntSize
+                                )
+                                onSignatureComplete(finalPageIndex, finalBitmap)
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF30D5C8)),
+                        shape = CircleShape,
+                        contentPadding = PaddingValues(12.dp),
+                        modifier = Modifier.size(48.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = "Aceptar",
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+
     }
 }
 // ------------------ Fin PlacingContent ------------------
@@ -1053,3 +1140,4 @@ private fun captureBitmap(
     )
     return imageBitmap
 }
+
