@@ -91,7 +91,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import com.example.scannerpro.Collage.CollageScreen
 import com.example.scannerpro.MarkUp.MarkupScreen
-import com.example.scannerpro.signature.SignatureScreen
+import com.example.scannerpro.signature.SignatureEditorScreen
 import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileOutputStream
@@ -147,18 +147,20 @@ fun FinalReviewScreen(
                 )
             }
         } else if (isSignatureMode) {
-            // --- INICIO DE LA SOLUCIÓN DEFINITIVA ---
-            // Se llama a SignatureScreen, que ahora contiene toda la lógica.
-            SignatureScreen(
+            // Simplemente reemplaza la llamada a SignatureScreen por SignatureEditorScreen
+            SignatureEditorScreen(
                 baseBitmaps = bitmaps,
                 initialPageIndex = currentPageInPageView ?: selectedIndex ?: 0,
-                onSignatureComplete = { pageIndex, newBitmap ->
+                onComplete = { pageIndex, newBitmap ->
+                    // Esta lógica para actualizar el bitmap sigue igual
                     bitmaps = bitmaps.toMutableList().also { it[pageIndex] = newBitmap }
                     isSignatureMode = false
                 },
-                onCancel = { isSignatureMode = false }
+                onCancel = {
+                    // Esta lógica para cancelar sigue igual
+                    isSignatureMode = false
+                }
             )
-            // --- FIN DE LA SOLUCIÓN DEFINITIVA ---
         } else if (isCollageMode) {
             CollageScreen(
                 initialBitmaps = bitmapsForCollage,
