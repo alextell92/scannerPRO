@@ -93,6 +93,7 @@ dependencies {
     implementation(libs.androidx.compose.testing)
     implementation(libs.androidx.room.ktx)
     implementation(libs.androidx.compose.foundation)
+    implementation(libs.androidx.compose.foundation.layout)
     kapt(libs.androidx.room.compiler)
 
 
