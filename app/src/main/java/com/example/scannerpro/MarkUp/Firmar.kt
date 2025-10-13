@@ -1,38 +1,28 @@
 package com.example.scannerpro.signature
-import androidx.compose.material.icons.filled.CalendarToday
-import androidx.compose.material.icons.filled.Receipt // icono "sello" aproximado
-import androidx.compose.ui.unit.sp
 
-import android.R.attr.x
 import android.app.Activity
 import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
 import android.os.Parcelable
-import android.util.Log
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitDragOrCancellation
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.awaitTouchSlopOrCancellation
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
-import androidx.compose.foundation.gestures.drag
-import androidx.compose.foundation.gestures.forEachGesture
-import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -40,11 +30,14 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.Divider
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Done
+import androidx.compose.material.icons.filled.Receipt
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material3.Button
@@ -52,14 +45,15 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -73,6 +67,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
@@ -81,60 +76,21 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerInputChange
-import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.positionChange
-import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
+import androidx.compose.ui.unit.sp
 import kotlinx.parcelize.Parcelize
 import kotlin.math.abs
+import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
-
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.material.Divider
-import androidx.compose.material3.Surface
-
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.snapshotFlow
-import androidx.compose.ui.layout.LayoutCoordinates
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.unit.IntOffset
-import kotlin.math.absoluteValue
-import kotlin.math.roundToInt
-
-import com.example.scannerpro.R.drawable
-import kotlin.math.cos
-import kotlin.math.sin
-import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.gestures.detectTransformGestures
-import androidx.compose.foundation.gestures.rememberTransformableState
-import androidx.compose.foundation.gestures.transformable
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.runtime.*
-import androidx.compose.ui.graphics.TransformOrigin
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.painter.Painter
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.res.painterResource
-import kotlin.math.cos
 import kotlin.math.sin
 
 // --- Helpers to make state saveable ---
@@ -257,7 +213,17 @@ fun SignatureScreen(
                 mode = SignatureMode.DRAWING
             },
             onSignatureComplete = onSignatureComplete,
-            onRequestDrawing = { mode = SignatureMode.DRAWING } // <-- nuevo
+            onRequestDrawing = {
+                mode = SignatureMode.DRAWING
+                parcelableStrokes = emptyList()
+                signatureBitmap = null
+
+                // 2. LA CLAVE: Resetea la posición y la escala
+              signatureOffset = Offset.Zero
+               signatureScale = 1f // <-- Esto evita que se vuelva invisible
+
+
+            } // <-- nuevo
         )
     }
 }
@@ -302,6 +268,7 @@ private fun DrawingContent(
                 )
             }
         }
+        //Estes es el menu de las opciones de la firma, el color, tamaño, cancelar,...
         SignatureDrawingControlsVertical(
             strokeColor = strokeColor,
             strokeWidth = strokeWidth,
@@ -509,20 +476,7 @@ private fun PlacingContent(
                 color = Color.White,
                 modifier = Modifier.background(Color.Black.copy(alpha = 0.3f), RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 4.dp)
             )
-            IconButton(onClick = {
-                if (baseBitmaps.isNotEmpty() && signatureBitmap != null) {
-                    val finalBitmap = placeSignatureOnBitmap(
-                        base = baseBitmaps[finalPageIndex],
-                        signature = signatureBitmap,
-                        signatureOffset = signatureScreenOffset,
-                        signatureScale = currentSignatureScale,
-                        containerSize = containerIntSize
-                    )
-                    onSignatureComplete(finalPageIndex, finalBitmap)
-                }
-            }) {
-                Icon(Icons.Default.Check, "Aplicar Firma", tint = Color(0xFF30D5C8), modifier = Modifier.background(Color.Black.copy(alpha = 0.3f), CircleShape).padding(4.dp))
-            }
+
         }
 
         // Surface con controles inferiores
@@ -832,47 +786,47 @@ fun DraggableSignature(
             }
 
 
-                // 3. El icono de eliminar ('X') es el principal punto de acción
-                val iconScale = 1f / signatureScale // Mantiene el tamaño del icono constante
+            // 3. El icono de eliminar ('X') es el principal punto de acción
+            val iconScale = 1f / signatureScale // Mantiene el tamaño del icono constante
 
-                IconButton(
-                    onClick = onDeleteSignature, // Llama directamente al lambda del padre
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .graphicsLayer {
-                            scaleX = iconScale
-                            scaleY = iconScale
-                            // Ajusta la posición para que quede en la esquina exterior
-                            translationX = with(density) { -14.dp.toPx() }
-                            translationY = with(density) { -14.dp.toPx() }
-                        }
-                        .background(Color(0xFF2C2C2E), CircleShape)
-                        .size(28.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "Eliminar firma",
-                        tint = Color.White,
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
+            IconButton(
+                onClick = onDeleteSignature, // Llama directamente al lambda del padre
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .graphicsLayer {
+                        scaleX = iconScale
+                        scaleY = iconScale
+                        // Ajusta la posición para que quede en la esquina exterior
+                        translationX = with(density) { -14.dp.toPx() }
+                        translationY = with(density) { -14.dp.toPx() }
+                    }
+                    .background(Color(0xFF2C2C2E), CircleShape)
+                    .size(28.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = "Eliminar firma",
+                    tint = Color.White,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
 
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .graphicsLayer {
-                            scaleX = iconScale
-                            scaleY = iconScale
-                            translationX = with(density) { 8.dp.toPx() } * iconScale
-                            translationY = with(density) { 8.dp.toPx() } * iconScale
-                        }
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(Color(0xFF414141)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(Icons.Default.Tune, "Redimensionar", Modifier.size(16.dp), tint = Color.White)
-                }
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .graphicsLayer {
+                        scaleX = iconScale
+                        scaleY = iconScale
+                        translationX = with(density) { 8.dp.toPx() } * iconScale
+                        translationY = with(density) { 8.dp.toPx() } * iconScale
+                    }
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF414141)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Default.Tune, "Redimensionar", Modifier.size(16.dp), tint = Color.White)
+            }
 
         }
     }
@@ -969,7 +923,7 @@ private fun SignatureDrawingCanvas(
     }
 }
 
-//El area real de firma
+//Es el menu de las ocpioens de la firma, color y tamaño, borrar y cancelar
 @Composable
 private fun SignatureDrawingControlsVertical(
     strokeColor: Color,
@@ -1101,7 +1055,7 @@ private fun DrawingOptionsPopup(
     }
 }
 
-
+//esto genera la imagen en base a los puntos que se toman en el area de grabado.
 private fun captureSignature(strokes: List<List<Offset>>, color: Color, strokeWidth: Float): ImageBitmap {
     val paths = strokes.mapNotNull { stroke ->
         if (stroke.size > 1) {
