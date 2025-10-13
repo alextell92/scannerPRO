@@ -1,0 +1,94 @@
+este funciona perfecto, explicamelo:
+
+package com.example.testimg
+
+import android.os.Bundle
+import android.util.Log
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.transformable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.res.painterResource
+import kotlin.math.cos
+import kotlin.math.sin
+
+
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+        setContent {
+            DraggableAndResizableImage()
+        }
+    }
+}
+@Composable
+fun DraggableAndResizableImage() {
+    var scale by remember { mutableStateOf(1f) }          // escala actual
+    var rotation by remember { mutableStateOf(0f) }       // rotación en grados
+    var offset by remember { mutableStateOf(Offset.Zero) } // desplazamiento en px (parent coords)
+
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Image(
+            painter = painterResource(id = R.drawable.trinagulo),
+            contentDescription = "Imagen para transformar",
+            modifier = Modifier
+                .pointerInput(Unit) {
+                    detectTransformGestures { centroid, pan, zoom, rotationChange ->
+                        // centroid: punto del gesto en coordenadas parent (px)
+                        // pan: desplazamiento directo del gesto (px)
+                        // zoom: factor multiplicativo (ej. 1.05)
+                        // rotationChange: delta en grados
+
+                        // 1) Calculamos el término que mantiene el punto bajo el dedo fijo
+                        //    offsetNew = C - (1/zoom) * R(-rotationChange) * (C - offset)
+                        val invZoom = 1f / zoom
+                        val vec = centroid - offset                             // C - offset
+                        val vecRot = vec.rotateBy(-rotationChange)              // R(-rotationChange) * (C - offset)
+                        val vecScaled = Offset(vecRot.x * invZoom, vecRot.y * invZoom) // / zoom
+                        val baseOffset = centroid - vecScaled                   // offset si no hubiera pan
+
+                        // 2) Aplicamos pan (traslación del dedo)
+                        offset = baseOffset + pan
+
+                        // 3) Actualizamos escala y rotación (con límites)
+                        scale = (scale * zoom).coerceIn(0.3f, 5f)
+                        rotation += rotationChange
+                    }
+                }
+                .graphicsLayer(
+                    scaleX = scale,
+                    scaleY = scale,
+                    rotationZ = rotation,
+                    translationX = offset.x,
+                    translationY = offset.y,
+                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 0.5f)
+                )
+                .fillMaxSize(0.5f)
+        )
+    }
+}
+
+/** Rota un Offset en grados (positivo = sentido antihorario). */
+fun Offset.rotateBy(degrees: Float): Offset {
+    val rad = Math.toRadians(degrees.toDouble())
+    val c = cos(rad)
+    val s = sin(rad)
+    val newX = (x * c - y * s).toFloat()
+    val newY = (x * s + y * c).toFloat()
+    return Offset(newX, newY)
+}
