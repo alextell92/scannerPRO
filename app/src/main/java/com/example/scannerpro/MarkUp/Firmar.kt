@@ -1,9 +1,11 @@
+
 package com.example.scannerpro.signature
 
 import android.app.Activity
 import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
 import android.os.Parcelable
+import androidx.annotation.OptIn
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -86,6 +88,8 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.media3.common.util.Log
+import androidx.media3.common.util.UnstableApi
 import kotlinx.parcelize.Parcelize
 import kotlin.math.abs
 import kotlin.math.cos
@@ -207,7 +211,7 @@ fun SignatureScreen(
 
                 // 2. LA CLAVE: Resetea la posición y la escala
                 signatureOffset = Offset.Zero
-                signatureScale = 1f // <-- Esto evita que se vuelva invisible
+               signatureScale = 1f // <-- Esto evita que se vuelva invisible
 
                 // 3. Vuelve al modo de dibujo
                 mode = SignatureMode.DRAWING
@@ -220,7 +224,7 @@ fun SignatureScreen(
 
                 // 2. LA CLAVE: Resetea la posición y la escala
               signatureOffset = Offset.Zero
-               signatureScale = 1f // <-- Esto evita que se vuelva invisible
+            //   signatureScale = 1f // <-- Esto evita que se vuelva invisible
 
 
             } // <-- nuevo
@@ -304,7 +308,7 @@ private fun PlacingContent(
     var signaturePageIndex by rememberSaveable { mutableStateOf(initialPageIndex) }
     var signatureRelative by rememberSaveable(stateSaver = OffsetSaver) { mutableStateOf(Offset(0.5f, 0.5f)) }
     var signatureScreenOffset by rememberSaveable(stateSaver = OffsetSaver) { mutableStateOf(signatureOffset) }
-    var currentSignatureScale by rememberSaveable { mutableFloatStateOf(signatureScale) }
+    //var currentSignatureScale by rememberSaveable { mutableFloatStateOf(signatureScale) }
     var signatureRotation by rememberSaveable { mutableFloatStateOf(0f) } // <-- AÑADE ESTA LÍNEA
 
     var isSignatureActive by rememberSaveable { mutableStateOf(false) }
@@ -351,7 +355,7 @@ private fun PlacingContent(
         LaunchedEffect(signatureBitmap, containerIntSize, lazyListState.isScrollInProgress) {
             // No calcules si ya está posicionado, no hay bitmap, el contenedor no tiene tamaño, o si se está haciendo scroll
             if (isInitialPosSet || signatureBitmap == null || containerIntSize.width == 0 || lazyListState.isScrollInProgress) {
-                return@LaunchedEffect
+                      return@LaunchedEffect
             }
 
             // Espera a que el LazyColumn termine su primer layout
@@ -359,7 +363,7 @@ private fun PlacingContent(
                 return@LaunchedEffect
             }
 
-            val initialScale = (containerIntSize.width * 0.20f) / signatureBitmap.width
+            val initialScale = (containerIntSize.width * 0.40f) / signatureBitmap.width
 
             val initialOffset = computeAbsoluteOffsetFromRelative(
                 initialPageIndex, // Usa el índice inicial
@@ -415,7 +419,7 @@ private fun PlacingContent(
                     sigBmp = sigBmp,
                     // Pasa los estados del padre directamente
                     signatureOffset = signatureScreenOffset,
-                    signatureScale = currentSignatureScale,
+                    signatureScale = signatureScale,
                     signatureRotation = signatureRotation, // <-- Pasa el nuevo estado de rotación
                     isSignatureActive = isSignatureActive,
                     onIsSignatureActiveChange = { isSignatureActive = it },
@@ -423,15 +427,16 @@ private fun PlacingContent(
 
                     // La nueva callback unificada que actualiza todo
                     onTransformChange = { newOffset, newScale, newRotation ->
+
                         signatureScreenOffset = newOffset
-                        currentSignatureScale = newScale
+                        onScaleChange(newScale) // <-- Llama al callback del padre
                         signatureRotation = newRotation
                     },
 
                     // La lógica de onDragEnd se queda exactamente igual
                     onDragEnd = { finalLocalOffset ->
-                        val sigDrawW = sigBmp.width * currentSignatureScale
-                        val sigDrawH = sigBmp.height * currentSignatureScale
+                        val sigDrawW = sigBmp.width * signatureScale
+                        val sigDrawH = sigBmp.height * signatureScale
                         val centerX = finalLocalOffset.x + sigDrawW / 2f
                         val centerY = finalLocalOffset.y + sigDrawH / 2f
                         val visible = lazyListState.layoutInfo.visibleItemsInfo
@@ -536,7 +541,7 @@ private fun PlacingContent(
                                     base = baseBitmaps[finalPageIndex],
                                     signature = signatureBitmap,
                                     signatureOffset = signatureScreenOffset,
-                                    signatureScale = currentSignatureScale,
+                                    signatureScale = signatureScale,
                                     containerSize = containerIntSize
                                 )
                                 onSignatureComplete(finalPageIndex, finalBitmap)
@@ -703,7 +708,7 @@ fun DraggableSignature(
 ) {
     val density = LocalDensity.current
 
-    var scale by remember { mutableStateOf(1f) }
+    var scale by remember { mutableStateOf(0f) }
     var rotation by remember { mutableStateOf(0f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
 
@@ -747,6 +752,8 @@ fun DraggableSignature(
                 .pointerInput(Unit) {
                     while (true) {
                         detectTransformGestures { centroid, pan, zoom, rotationChange ->
+                            val newScale = (signatureScale * zoom).coerceIn(0.3f, 5f)
+
                             val invZoom = 1f / zoom
                             val vec = centroid - offset
                             val vecRot = vec.rotateBy(-rotationChange)
@@ -757,7 +764,7 @@ fun DraggableSignature(
                             scale = (scale * zoom).coerceIn(0.3f, 5f)
                             rotation += rotationChange
 
-                            onTransformChange(offset, scale, rotation)
+                            onTransformChange(offset, newScale, rotation)
                         }
                         onDragEnd(offset)
                     }
