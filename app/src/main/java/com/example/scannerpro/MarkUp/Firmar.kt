@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
 import android.os.Parcelable
+import android.util.Log
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -217,13 +218,10 @@ fun SignatureScreen(
                 mode = SignatureMode.DRAWING
                 parcelableStrokes = emptyList()
                 signatureBitmap = null
-
                 // 2. LA CLAVE: Resetea la posición y la escala
-              signatureOffset = Offset.Zero
-               signatureScale = 1f // <-- Esto evita que se vuelva invisible
-
-
-            } // <-- nuevo
+                signatureOffset = Offset.Zero
+                signatureScale = 1f // <-- Esto evita que se vuelva invisible
+            }
         )
     }
 }
@@ -348,18 +346,31 @@ private fun PlacingContent(
             return Offset(centerX - sigDrawW / 2f, centerY - sigDrawH / 2f)
         }
 
+        LaunchedEffect(signatureBitmap) {
+            if (signatureBitmap != null) {
+                // En cuanto recibimos un nuevo bitmap, reseteamos la bandera
+                // para forzar el cálculo de la posición inicial.
+                isInitialPosSet = false
+            }
+        }
+
+
         LaunchedEffect(signatureBitmap, containerIntSize, lazyListState.isScrollInProgress) {
             // No calcules si ya está posicionado, no hay bitmap, el contenedor no tiene tamaño, o si se está haciendo scroll
+
+
             if (isInitialPosSet || signatureBitmap == null || containerIntSize.width == 0 || lazyListState.isScrollInProgress) {
+                Log.e("prueba","se revisa y entro al return 1");
                 return@LaunchedEffect
             }
 
             // Espera a que el LazyColumn termine su primer layout
             if (lazyListState.layoutInfo.visibleItemsInfo.isEmpty()) {
+                Log.e("prueba","se revisa y entro al return 2");
                 return@LaunchedEffect
             }
 
-            val initialScale = (containerIntSize.width * 0.20f) / signatureBitmap.width
+            val initialScale = (containerIntSize.width * 0.10f) / signatureBitmap.width
 
             val initialOffset = computeAbsoluteOffsetFromRelative(
                 initialPageIndex, // Usa el índice inicial
