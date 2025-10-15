@@ -6,6 +6,9 @@ import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
 import android.os.Parcelable
 import androidx.annotation.OptIn
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -33,6 +36,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Divider
+import androidx.compose.material.TextButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Check
@@ -56,6 +60,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -90,14 +95,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.media3.common.util.Log
 import androidx.media3.common.util.UnstableApi
+import kotlinx.coroutines.launch
 import kotlinx.parcelize.Parcelize
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 import kotlin.math.sin
 
-// --- Helpers to make state saveable ---
 @Parcelize
 private data class ParcelableOffset(val x: Float, val y: Float) : Parcelable {
     fun toOffset() = Offset(x, y)
@@ -363,7 +369,7 @@ private fun PlacingContent(
                 return@LaunchedEffect
             }
 
-            val initialScale = (containerIntSize.width * 0.40f) / signatureBitmap.width
+            val initialScale = (containerIntSize.width * 0.60f) / signatureBitmap.width
 
             val initialOffset = computeAbsoluteOffsetFromRelative(
                 initialPageIndex, // Usa el índice inicial
@@ -424,12 +430,10 @@ private fun PlacingContent(
                     isSignatureActive = isSignatureActive,
                     onIsSignatureActiveChange = { isSignatureActive = it },
                     onDeleteSignature = onDeleteSignature,
-
                     // La nueva callback unificada que actualiza todo
                     onTransformChange = { newOffset, newScale, newRotation ->
-
                         signatureScreenOffset = newOffset
-                        onScaleChange(newScale) // <-- Llama al callback del padre
+                        onScaleChange(newScale)
                         signatureRotation = newRotation
                     },
 
@@ -692,25 +696,49 @@ private fun DraggableSignature2(
 }
 
 
+
 @Composable
 fun DraggableSignature(
     modifier: Modifier = Modifier,
     sigBmp: ImageBitmap,
     signatureOffset: Offset,
     signatureScale: Float,
-    signatureRotation: Float,
+    signatureRotation: Float, // en radianes
     onTransformChange: (newOffset: Offset, newScale: Float, newRotation: Float) -> Unit,
-
     isSignatureActive: Boolean,
     onIsSignatureActiveChange: (Boolean) -> Unit,
     onDeleteSignature: () -> Unit,
     onDragEnd: (Offset) -> Unit
 ) {
     val density = LocalDensity.current
+    val coroutineScope = rememberCoroutineScope()
 
-    var scale by remember { mutableStateOf(0f) }
-    var rotation by remember { mutableStateOf(0f) }
-    var offset by remember { mutableStateOf(Offset.Zero) }
+    // Estados locales
+    var localOffset by remember { mutableStateOf(signatureOffset) }
+    var localScale by remember { mutableStateOf(signatureScale) }
+    var localRotation by remember { mutableStateOf(signatureRotation) }
+
+    // Animatables (para snap)
+    val scaleAnim = remember { Animatable(signatureScale) }
+    val rotationAnim = remember { Animatable(signatureRotation) }
+
+    // Mantener sincronía si el padre resetea valores
+    LaunchedEffect(signatureOffset) { localOffset = signatureOffset }
+    LaunchedEffect(signatureScale) {
+        localScale = signatureScale
+        scaleAnim.snapTo(signatureScale)
+    }
+    LaunchedEffect(signatureRotation) {
+        localRotation = signatureRotation
+        rotationAnim.snapTo(signatureRotation)
+    }
+
+    // Parámetros
+    val SENSITIVITY_SCALE = 0.006f
+    val SENSITIVITY_ROT = 0.01f
+    val SNAP_SCALE_STEP = 0.1f
+    val SNAP_ROT_DEG = 15f
+    val snapAnimSpec = spring<Float>(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium)
 
     val bmpWidthDp = with(density) { sigBmp.width.toDp() }
     val bmpHeightDp = with(density) { sigBmp.height.toDp() }
@@ -719,15 +747,10 @@ fun DraggableSignature(
         modifier = modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
-        // --- Botón para quitar y volver a la interfaz de firma ---
         if (isSignatureActive) {
-            // Visible solo cuando la firma está activa
-            androidx.compose.material3.TextButton(
+            TextButton(
                 onClick = {
-                    // Primero avisamos al padre que borre la firma
                     onDeleteSignature()
-                    // Luego pedimos al padre que muestre la UI de firma.
-                    // AJUSTA este booleano según la lógica del padre (true/false).
                     onIsSignatureActiveChange(true)
                 },
                 modifier = Modifier
@@ -735,47 +758,69 @@ fun DraggableSignature(
                     .padding(top = 12.dp)
                     .clip(RoundedCornerShape(20.dp))
             ) {
-                androidx.compose.material3.Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = "Quitar firma",
-                    modifier = Modifier.size(16.dp)
-                )
+                Icon(Icons.Default.Close, contentDescription = "Quitar firma", modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
                 androidx.compose.material3.Text("Re-firmar")
             }
         }
 
-        // --- Contenedor transformado (imagen + borde + botones) ---
         Box(
             modifier = Modifier
                 .size(width = bmpWidthDp, height = bmpHeightDp)
                 .pointerInput(Unit) {
                     while (true) {
                         detectTransformGestures { centroid, pan, zoom, rotationChange ->
-                            val newScale = (signatureScale * zoom).coerceIn(0.3f, 5f)
+                            val constrainedScale = (localScale * zoom).coerceIn(0.3f, 5f)
+                            val offsetFromCentroid = localOffset - centroid
+                            val rotated = offsetFromCentroid.rotateBy(rotationChange)
+                            val scaled = rotated * zoom
+                            val newOffset = centroid + scaled + pan
+                            val newRotation = localRotation + rotationChange
 
-                            val invZoom = 1f / zoom
-                            val vec = centroid - offset
-                            val vecRot = vec.rotateBy(-rotationChange)
-                            val vecScaled = Offset(vecRot.x * invZoom, vecRot.y * invZoom)
-                            val baseOffset = centroid - vecScaled
+                            localOffset = newOffset
+                            localScale = constrainedScale
+                            localRotation = newRotation
 
-                            offset = baseOffset + pan
-                            scale = (scale * zoom).coerceIn(0.3f, 5f)
-                            rotation += rotationChange
-
-                            onTransformChange(offset, newScale, rotation)
+                            onTransformChange(newOffset, constrainedScale, newRotation)
                         }
-                        onDragEnd(offset)
+
+                        // Aquí termina el gesto multitouch: hacemos snap ANTES de notificar onDragEnd
+                        coroutineScope.launch {
+                            // sincronizar animatables
+                            scaleAnim.snapTo(localScale)
+                            rotationAnim.snapTo(localRotation)
+
+                            // calcular targets (hacer esto **antes** de animateTo)
+                            val targetScale = snapToStep(localScale, SNAP_SCALE_STEP).coerceIn(0.3f, 5f)
+                            val targetRotRad = Math.toRadians(
+                                snapToStep(Math.toDegrees(localRotation.toDouble()).toFloat(), SNAP_ROT_DEG).toDouble()
+                            ).toFloat()
+
+                            // lanzar animaciones sin lambda (evitamos mismatch)
+                            val jobS = launch { scaleAnim.animateTo(targetScale, animationSpec = snapAnimSpec) }
+                            val jobR = launch { rotationAnim.animateTo(targetRotRad, animationSpec = snapAnimSpec) }
+
+                            // esperar
+                            jobS.join()
+                            jobR.join()
+
+                            // actualizar estados finales desde los animatables
+                            localScale = scaleAnim.value
+                            localRotation = rotationAnim.value
+
+                            // notificar estado final
+                            onTransformChange(localOffset, localScale, localRotation)
+                            onDragEnd(localOffset)
+                        }
                     }
                 }
                 .graphicsLayer(
-                    translationX = signatureOffset.x,
-                    translationY = signatureOffset.y,
-                    scaleX = signatureScale,
-                    scaleY = signatureScale,
-                    rotationZ = signatureRotation,
-                    transformOrigin = TransformOrigin.Center
+                    translationX = localOffset.x,
+                    translationY = localOffset.y,
+                    scaleX = localScale,
+                    scaleY = localScale,
+                    rotationZ = Math.toDegrees(localRotation.toDouble()).toFloat(),
+                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center
                 )
         ) {
             Box(
@@ -784,26 +829,22 @@ fun DraggableSignature(
                     .border(3.dp, Color(0xFF00C853), RoundedCornerShape(6.dp))
                     .clip(RoundedCornerShape(6.dp))
             ) {
-                Image(
+                androidx.compose.foundation.Image(
                     bitmap = sigBmp,
                     contentDescription = "Firma",
                     modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Fit
+                    contentScale = androidx.compose.ui.layout.ContentScale.Fit
                 )
             }
 
-
-            // 3. El icono de eliminar ('X') es el principal punto de acción
-            val iconScale = 1f / signatureScale // Mantiene el tamaño del icono constante
-
+            val iconScale = 1f / localScale
             IconButton(
-                onClick = onDeleteSignature, // Llama directamente al lambda del padre
+                onClick = onDeleteSignature,
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .graphicsLayer {
                         scaleX = iconScale
                         scaleY = iconScale
-                        // Ajusta la posición para que quede en la esquina exterior
                         translationX = with(density) { -14.dp.toPx() }
                         translationY = with(density) { -14.dp.toPx() }
                     }
@@ -818,6 +859,8 @@ fun DraggableSignature(
                 )
             }
 
+            // HANDLE bottom-right
+            var isHandleDragging by remember { mutableStateOf(false) }
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
@@ -829,16 +872,65 @@ fun DraggableSignature(
                     }
                     .size(36.dp)
                     .clip(CircleShape)
-                    .background(Color(0xFF414141)),
+                    .background(if (isHandleDragging) Color(0xFF616161) else Color(0xFF414141))
+                    .pointerInput(Unit) {
+                        detectDragGestures(
+                            onDragStart = { isHandleDragging = true },
+                            onDragEnd = {
+                                isHandleDragging = false
+                                // snap animado al terminar el drag del handle (misma técnica)
+                                coroutineScope.launch {
+                                    scaleAnim.snapTo(localScale)
+                                    rotationAnim.snapTo(localRotation)
+
+                                    val targetScale = snapToStep(localScale, SNAP_SCALE_STEP).coerceIn(0.3f, 5f)
+                                    val targetRot = Math.toRadians(
+                                        snapToStep(Math.toDegrees(localRotation.toDouble()).toFloat(), SNAP_ROT_DEG).toDouble()
+                                    ).toFloat()
+
+                                    val j1 = launch { scaleAnim.animateTo(targetScale, animationSpec = snapAnimSpec) }
+                                    val j2 = launch { rotationAnim.animateTo(targetRot, animationSpec = snapAnimSpec) }
+                                    j1.join(); j2.join()
+
+                                    localScale = scaleAnim.value
+                                    localRotation = rotationAnim.value
+                                    onTransformChange(localOffset, localScale, localRotation)
+                                    onDragEnd(localOffset)
+                                }
+                            },
+                            onDragCancel = {
+                                isHandleDragging = false
+                                coroutineScope.launch { onDragEnd(localOffset) }
+                            },
+                            onDrag = { change, dragAmount ->
+                                change.consume()
+                                val dx = dragAmount.x
+                                val dy = dragAmount.y
+
+                                val deltaScaleFactor = 1f + dx * SENSITIVITY_SCALE
+                                val newScale = (localScale * deltaScaleFactor).coerceIn(0.3f, 5f)
+                                val newRotation = localRotation + dy * SENSITIVITY_ROT
+
+                                localScale = newScale
+                                localRotation = newRotation
+
+                                onTransformChange(localOffset, localScale, localRotation)
+                            }
+                        )
+                    },
                 contentAlignment = Alignment.Center
             ) {
                 Icon(Icons.Default.Tune, "Redimensionar", Modifier.size(16.dp), tint = Color.White)
             }
-
         }
     }
 }
 
+
+private fun snapToStep(value: Float, step: Float): Float {
+    if (step <= 0f) return value
+    return ( (value / step).roundToInt() * step )
+}
 
 /** Rota un Offset en grados (positivo = sentido antihorario). */
 fun Offset.rotateBy(degrees: Float): Offset {
