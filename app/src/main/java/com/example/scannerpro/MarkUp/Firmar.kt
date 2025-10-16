@@ -697,6 +697,8 @@ private fun DraggableSignature2(
 
 
 
+
+
 @Composable
 fun DraggableSignature(
     modifier: Modifier = Modifier,
@@ -713,16 +715,40 @@ fun DraggableSignature(
     val density = LocalDensity.current
     val coroutineScope = rememberCoroutineScope()
 
+//    Pinch menos sensible: ZOOM_SENSITIVITY = 0.6f
+//
+//    Handle zoom suave: SENSITIVITY_SCALE = 0.003f
+//
+//    Rotación suave: SENSITIVITY_ROT = 0.005f (≈ 0.286°/px)
+//
+//    Límites: MIN_SCALE = 0.3f, MAX_SCALE = 5f
+//
+//    Snap fino: SNAP_SCALE_STEP = 0.05f
+
+    // --------- AJUSTABLES (sensibilidad / límites / snap) ----------
+    //val ZOOM_SENSITIVITY = 1.0f      // si en algún momento vuelves a usar pinch; aquí no se usa
+    val SENSITIVITY_SCALE = 0.003f   // dx -> escala
+    val SENSITIVITY_ROT = 0.005f      // dy -> rotación (radianes por px)
+    val MIN_SCALE = 0.1f
+    val MAX_SCALE = 1.1f
+    val SNAP_SCALE_STEP = 0.1f
+    val SNAP_ROT_DEG = 15f
+    val snapAnimSpec = spring<Float>(
+        dampingRatio = Spring.DampingRatioMediumBouncy,
+        stiffness = Spring.StiffnessMedium
+    )
+    // --------------------------------------------------------------
+
     // Estados locales
     var localOffset by remember { mutableStateOf(signatureOffset) }
     var localScale by remember { mutableStateOf(signatureScale) }
     var localRotation by remember { mutableStateOf(signatureRotation) }
 
-    // Animatables (para snap)
+    // Animatables para snap
     val scaleAnim = remember { Animatable(signatureScale) }
     val rotationAnim = remember { Animatable(signatureRotation) }
 
-    // Mantener sincronía si el padre resetea valores
+    // Sincronizar si el padre cambia (reset desde fuera)
     LaunchedEffect(signatureOffset) { localOffset = signatureOffset }
     LaunchedEffect(signatureScale) {
         localScale = signatureScale
@@ -733,13 +759,6 @@ fun DraggableSignature(
         rotationAnim.snapTo(signatureRotation)
     }
 
-    // Parámetros
-    val SENSITIVITY_SCALE = 0.006f
-    val SENSITIVITY_ROT = 0.01f
-    val SNAP_SCALE_STEP = 0.1f
-    val SNAP_ROT_DEG = 15f
-    val snapAnimSpec = spring<Float>(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium)
-
     val bmpWidthDp = with(density) { sigBmp.width.toDp() }
     val bmpHeightDp = with(density) { sigBmp.height.toDp() }
 
@@ -747,6 +766,7 @@ fun DraggableSignature(
         modifier = modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
+        // botón "Re-firmar" arriba
         if (isSignatureActive) {
             TextButton(
                 onClick = {
@@ -764,55 +784,27 @@ fun DraggableSignature(
             }
         }
 
+        // Contenedor: ahora SOLO pan (1 dedo)
         Box(
             modifier = Modifier
                 .size(width = bmpWidthDp, height = bmpHeightDp)
                 .pointerInput(Unit) {
-                    while (true) {
-                        detectTransformGestures { centroid, pan, zoom, rotationChange ->
-                            val constrainedScale = (localScale * zoom).coerceIn(0.3f, 5f)
-                            val offsetFromCentroid = localOffset - centroid
-                            val rotated = offsetFromCentroid.rotateBy(rotationChange)
-                            val scaled = rotated * zoom
-                            val newOffset = centroid + scaled + pan
-                            val newRotation = localRotation + rotationChange
-
-                            localOffset = newOffset
-                            localScale = constrainedScale
-                            localRotation = newRotation
-
-                            onTransformChange(newOffset, constrainedScale, newRotation)
-                        }
-
-                        // Aquí termina el gesto multitouch: hacemos snap ANTES de notificar onDragEnd
-                        coroutineScope.launch {
-                            // sincronizar animatables
-                            scaleAnim.snapTo(localScale)
-                            rotationAnim.snapTo(localRotation)
-
-                            // calcular targets (hacer esto **antes** de animateTo)
-                            val targetScale = snapToStep(localScale, SNAP_SCALE_STEP).coerceIn(0.3f, 5f)
-                            val targetRotRad = Math.toRadians(
-                                snapToStep(Math.toDegrees(localRotation.toDouble()).toFloat(), SNAP_ROT_DEG).toDouble()
-                            ).toFloat()
-
-                            // lanzar animaciones sin lambda (evitamos mismatch)
-                            val jobS = launch { scaleAnim.animateTo(targetScale, animationSpec = snapAnimSpec) }
-                            val jobR = launch { rotationAnim.animateTo(targetRotRad, animationSpec = snapAnimSpec) }
-
-                            // esperar
-                            jobS.join()
-                            jobR.join()
-
-                            // actualizar estados finales desde los animatables
-                            localScale = scaleAnim.value
-                            localRotation = rotationAnim.value
-
-                            // notificar estado final
-                            onTransformChange(localOffset, localScale, localRotation)
+                    detectDragGestures(
+                        onDragStart = { /* opcional: marcar inicio de pan */ },
+                        onDragEnd = {
+                            // terminar pan -> notificar
                             onDragEnd(localOffset)
+                        },
+                        onDragCancel = {
+                            onDragEnd(localOffset)
+                        },
+                        onDrag = { change, dragAmount ->
+                            // dragAmount en px; actualizamos offset (pan)
+                            change.consume()
+                            localOffset = localOffset + dragAmount
+                            onTransformChange(localOffset, localScale, localRotation)
                         }
-                    }
+                    )
                 }
                 .graphicsLayer(
                     translationX = localOffset.x,
@@ -823,6 +815,7 @@ fun DraggableSignature(
                     transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center
                 )
         ) {
+            // Borde + imagen
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -837,6 +830,7 @@ fun DraggableSignature(
                 )
             }
 
+            // Icono eliminar (arriba-izq) — mantiene tamaño constante con el scale
             val iconScale = 1f / localScale
             IconButton(
                 onClick = onDeleteSignature,
@@ -859,7 +853,7 @@ fun DraggableSignature(
                 )
             }
 
-            // HANDLE bottom-right
+            // HANDLE bottom-right: controla zoom (dx) y rotación (dy)
             var isHandleDragging by remember { mutableStateOf(false) }
             Box(
                 modifier = Modifier
@@ -878,12 +872,12 @@ fun DraggableSignature(
                             onDragStart = { isHandleDragging = true },
                             onDragEnd = {
                                 isHandleDragging = false
-                                // snap animado al terminar el drag del handle (misma técnica)
+                                // snap animado al terminar el drag del handle
                                 coroutineScope.launch {
                                     scaleAnim.snapTo(localScale)
                                     rotationAnim.snapTo(localRotation)
 
-                                    val targetScale = snapToStep(localScale, SNAP_SCALE_STEP).coerceIn(0.3f, 5f)
+                                    val targetScale = snapToStep(localScale, SNAP_SCALE_STEP).coerceIn(MIN_SCALE, MAX_SCALE)
                                     val targetRot = Math.toRadians(
                                         snapToStep(Math.toDegrees(localRotation.toDouble()).toFloat(), SNAP_ROT_DEG).toDouble()
                                     ).toFloat()
@@ -892,6 +886,7 @@ fun DraggableSignature(
                                     val j2 = launch { rotationAnim.animateTo(targetRot, animationSpec = snapAnimSpec) }
                                     j1.join(); j2.join()
 
+                                    // actualizar estados finales
                                     localScale = scaleAnim.value
                                     localRotation = rotationAnim.value
                                     onTransformChange(localOffset, localScale, localRotation)
@@ -907,8 +902,11 @@ fun DraggableSignature(
                                 val dx = dragAmount.x
                                 val dy = dragAmount.y
 
+                                // escala incremental
                                 val deltaScaleFactor = 1f + dx * SENSITIVITY_SCALE
-                                val newScale = (localScale * deltaScaleFactor).coerceIn(0.3f, 5f)
+                                val newScale = (localScale * deltaScaleFactor).coerceIn(MIN_SCALE, MAX_SCALE)
+
+                                // rotación incremental (radianes)
                                 val newRotation = localRotation + dy * SENSITIVITY_ROT
 
                                 localScale = newScale
@@ -925,6 +923,7 @@ fun DraggableSignature(
         }
     }
 }
+
 
 
 private fun snapToStep(value: Float, step: Float): Float {
