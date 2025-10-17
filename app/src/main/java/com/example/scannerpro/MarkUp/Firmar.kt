@@ -713,6 +713,7 @@ private operator fun Offset.minus(other: Offset) = Offset(x - other.x, y - other
 
 
 
+// Asegúrate de tener este helper en el archivo
 private fun Offset.rotateRad(rad: Float): Offset {
     val c = kotlin.math.cos(rad)
     val s = kotlin.math.sin(rad)
@@ -735,11 +736,11 @@ fun DraggableSignature(
     val density = LocalDensity.current
     val coroutineScope = rememberCoroutineScope()
 
-    // ---- parámetros que puedes ajustar ----
-    val SENSITIVITY_SCALE = 0.0035f   // mayor = scaling más pronunciado por px en X
-    val SENSITIVITY_ROT = 0.0045f     // mayor = rotación más pronunciada por px en Y
-    val MIN_SCALE = 0.1f
-    val MAX_SCALE = 1.2f
+    // ---- parámetros ajustables ----
+    val SENSITIVITY_SCALE = 0.0035f
+    val SENSITIVITY_ROT = 0.0045f
+    val MIN_SCALE = 0.3f
+    val MAX_SCALE = 5f
     val SNAP_SCALE_STEP = 0.05f
     val SNAP_ROT_DEG = 10f
     val MIX_EXP = 1.25f
@@ -747,7 +748,7 @@ fun DraggableSignature(
         dampingRatio = Spring.DampingRatioMediumBouncy,
         stiffness = Spring.StiffnessMedium
     )
-    // ---------------------------------------
+    // --------------------------------
 
     // estados sincronizados con props
     var localOffset by remember { mutableStateOf(signatureOffset) }
@@ -777,17 +778,17 @@ fun DraggableSignature(
     var sigTopLeft by remember { mutableStateOf(Offset.Zero) }
     var sigSize by remember { mutableStateOf(IntSize.Zero) }
 
-    // acumulador opcional (si quieres decide por acumulación)
+    // acumulador de arrastre para mezcla
     var accumulatedDrag by remember { mutableStateOf(Offset.Zero) }
 
     Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        // overlay para detectar toque fuera (cuando activo)
+        // overlay para detectar toque fuera (cuando está activa)
         if (isSignatureActive) {
             Box(
                 modifier = Modifier
                     .matchParentSize()
                     .pointerInput(isSignatureActive, sigTopLeft, sigSize) {
-                        detectDragGestures(onDrag = { _, _ -> /* consumir para bloquear scroll */ })
+                        detectDragGestures(onDrag = { _, _ -> /* consumir para bloquear scroll mientras activo */ })
                     }
                     .pointerInput(isSignatureActive, sigTopLeft, sigSize) {
                         detectTapGestures { tapOffset ->
@@ -802,7 +803,7 @@ fun DraggableSignature(
             )
         }
 
-        // Contenedor transformado (usa TopStart como origen para math consistente)
+        // Contenedor transformado (TopStart origin para math consistente)
         Box(
             modifier = Modifier
                 .size(width = bmpWidthDp, height = bmpHeightDp)
@@ -810,23 +811,27 @@ fun DraggableSignature(
                     sigTopLeft = coords.localToRoot(Offset.Zero)
                     sigSize = coords.size
                 }
-                .pointerInput(isSignatureActive) {
+                // Tap simple: activa sin bloquear scroll
+                .pointerInput(Unit) {
                     detectTapGestures(onTap = { onIsSignatureActiveChange(true) })
                 }
-                .pointerInput(isSignatureActive) {
-                    if (isSignatureActive) {
-                        detectDragGestures(
-                            onDragEnd = { onDragEnd(localOffset) },
-                            onDragCancel = { onDragEnd(localOffset) },
-                            onDrag = { change, dragAmount ->
-                                change.consume()
-                                localOffset = localOffset + dragAmount
-                                onTransformChange(localOffset, localScale, localRotation)
-                            }
-                        )
-                    } else {
-                        awaitPointerEventScope { awaitPointerEvent() }
-                    }
+                // Drag sobre la firma: siempre activo, inicia arrastre inmediatamente
+                .pointerInput(Unit) {
+                    detectDragGestures(
+                        onDragStart = {
+                            // activar en cuanto empiece a arrastrar
+                            onIsSignatureActiveChange(true)
+                            accumulatedDrag = Offset.Zero
+                        },
+                        onDragEnd = { onDragEnd(localOffset) },
+                        onDragCancel = { onDragEnd(localOffset) },
+                        onDrag = { change, dragAmount ->
+                            change.consume()
+                            // arrastre inmediato: mover la firma
+                            localOffset = localOffset + dragAmount
+                            onTransformChange(localOffset, localScale, localRotation)
+                        }
+                    )
                 }
                 .graphicsLayer(
                     translationX = localOffset.x,
@@ -866,9 +871,8 @@ fun DraggableSignature(
                         .size(28.dp)
                 ) { Icon(Icons.Default.Close, "Eliminar", tint = Color.White) }
 
-                // HANDLE: ahora mezcla suave scale/rotate
+                // HANDLE (mezcla scale/rotate) — sin cambios en la lógica interna
                 var isHandleDragging by remember { mutableStateOf(false) }
-
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
@@ -891,13 +895,11 @@ fun DraggableSignature(
                                 onDragEnd = {
                                     isHandleDragging = false
                                     accumulatedDrag = Offset.Zero
-                                    // snap animado (sin lambdas problemáticas)
                                     coroutineScope.launch {
                                         scaleAnim.snapTo(localScale)
                                         rotationAnim.snapTo(localRotation)
                                         val targetScale = snapToStep(localScale, SNAP_SCALE_STEP).coerceIn(MIN_SCALE, MAX_SCALE)
                                         val targetRot = Math.toRadians(snapToStep(Math.toDegrees(localRotation.toDouble()).toFloat(), SNAP_ROT_DEG).toDouble()).toFloat()
-
                                         val j1 = launch { scaleAnim.animateTo(targetScale, animationSpec = snapAnimSpec) }
                                         val j2 = launch { rotationAnim.animateTo(targetRot, animationSpec = snapAnimSpec) }
                                         j1.join(); j2.join()
@@ -914,39 +916,30 @@ fun DraggableSignature(
                                 },
                                 onDrag = { change, dragAmount ->
                                     change.consume()
-
-                                    // acumulamos el desplazamiento total (para medir dirección predominante)
+                                    // acumulamos para decidir mezcla
                                     accumulatedDrag = accumulatedDrag + dragAmount
                                     val ax = kotlin.math.abs(accumulatedDrag.x)
                                     val ay = kotlin.math.abs(accumulatedDrag.y)
-
-                                    // si no hay movimiento, nada que hacer
                                     if (ax + ay == 0f) return@detectDragGestures
 
-                                    // mezcla suave: usar potencia MIX_EXP para controlar "nitidez"
                                     val axp = ax.toDouble().pow(MIX_EXP.toDouble()).toFloat()
                                     val ayp = ay.toDouble().pow(MIX_EXP.toDouble()).toFloat()
                                     val sum = (axp + ayp).coerceAtLeast(1e-6f)
-                                    val mixScale = axp / sum        // [0..1]
-                                    val mixRot = ayp / sum          // [0..1]
+                                    val mixScale = axp / sum
+                                    val mixRot = ayp / sum
 
-                                    // aplicar la contribución INCREMENTAL del evento actual (dragAmount)
                                     val dx = dragAmount.x
                                     val dy = dragAmount.y
 
-                                    // escala incremental ponderada
                                     val scaleDeltaFactor = 1f + dx * SENSITIVITY_SCALE * mixScale
                                     val newScale = (localScale * scaleDeltaFactor).coerceIn(MIN_SCALE, MAX_SCALE)
 
-                                    // rotación incremental ponderada (radianes)
                                     val newRotation = localRotation + dy * SENSITIVITY_ROT * mixRot
 
-                                    // mantener el centro fijo: calculamos nuevo offset a partir de centro global
                                     val centerLocal = Offset(bmpWidthPx / 2f, bmpHeightPx / 2f)
                                     val curCenterGlobal = localOffset + (centerLocal.rotateRad(localRotation) * localScale)
                                     val newOffset = curCenterGlobal - (centerLocal.rotateRad(newRotation) * newScale)
 
-                                    // aplicar cambios
                                     localScale = newScale
                                     localRotation = newRotation
                                     localOffset = newOffset
@@ -963,6 +956,7 @@ fun DraggableSignature(
         }
     }
 }
+
 
 
 
