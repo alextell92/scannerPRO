@@ -41,6 +41,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CropRotate
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.Receipt
@@ -322,7 +323,7 @@ private fun PlacingContent(
     var finalPageIndex by rememberSaveable { mutableStateOf(initialPageIndex) }
     var containerIntSize by remember { mutableStateOf(IntSize(0, 0)) }
     var scrollChannel by remember { mutableStateOf(0f) }
-
+    var signatureBounds by remember { mutableStateOf(Rect.Zero) }
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -731,8 +732,8 @@ fun DraggableSignature(
     // ------- parámetros (suaves) -------
     val SENSITIVITY_SCALE = 0.003f
     val SENSITIVITY_ROT = 0.005f
-    val MIN_SCALE = 0.3f
-    val MAX_SCALE = 5f
+    val MIN_SCALE = 0.2f
+    val MAX_SCALE = 1.2f
     val SNAP_SCALE_STEP = 0.05f
     val SNAP_ROT_DEG = 10f
     val snapAnimSpec = spring<Float>(
@@ -773,33 +774,33 @@ fun DraggableSignature(
 
     Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         // overlay que detecta taps fuera sólo cuando la firma está activa
-        if (isSignatureActive) {
-            Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .pointerInput(isSignatureActive, sigTopLeft, sigSize) {
-                        detectDragGestures(onDrag = { _, _ -> /* consumir para bloquear scroll mientras activo */ }) // evita scroll accidental
-                    }
-                    .pointerInput(isSignatureActive, sigTopLeft, sigSize) {
-                        detectTapGestures { tapOffset ->
-                            // tapOffset es relativo a esta overlay (llena pantalla) -> mismo sistema de coordenadas que sigTopLeft
-                            val left = sigTopLeft.x
-                            val top = sigTopLeft.y
-                            val right = left + sigSize.width
-                            val bottom = top + sigSize.height
-                            val x = tapOffset.x
-                            val y = tapOffset.y
-                            val inside =
-                                x >= left && x <= right && y >= top && y <= bottom
-                            if (!inside) {
-                                // fue tap fuera -> desactivar
-                                onIsSignatureActiveChange(false)
-                            }
-                            // si inside: no hacemos nada aquí, el tap se manejará por el propio signature (activar/drag)
-                        }
-                    }
-            )
-        }
+//        if (isSignatureActive) {
+//            Box(
+//                modifier = Modifier
+//                    .matchParentSize()
+//                    .pointerInput(isSignatureActive, sigTopLeft, sigSize) {
+//                        detectDragGestures(onDrag = { _, _ -> /* consumir para bloquear scroll mientras activo */ }) // evita scroll accidental
+//                    }
+//                    .pointerInput(isSignatureActive, sigTopLeft, sigSize) {
+//                        detectTapGestures { tapOffset ->
+//                            // tapOffset es relativo a esta overlay (llena pantalla) -> mismo sistema de coordenadas que sigTopLeft
+//                            val left = sigTopLeft.x
+//                            val top = sigTopLeft.y
+//                            val right = left + sigSize.width
+//                            val bottom = top + sigSize.height
+//                            val x = tapOffset.x
+//                            val y = tapOffset.y
+//                            val inside =
+//                                x >= left && x <= right && y >= top && y <= bottom
+//                            if (!inside) {
+//                                // fue tap fuera -> desactivar
+//                                onIsSignatureActiveChange(false)
+//                            }
+//                            // si inside: no hacemos nada aquí, el tap se manejará por el propio signature (activar/drag)
+//                        }
+//                    }
+//            )
+//        }
 
         // ------ Contenedor transformado (la firma) ------
         // Dentro de tu Box que actúa como contenedor de la firma,
@@ -858,7 +859,6 @@ fun DraggableSignature(
                     contentScale = androidx.compose.ui.layout.ContentScale.Fit
                 )
             }
-
             // --- Mostrar borde y controles SOLO si está activa ---
             if (isSignatureActive) {
                 // Borde verde
@@ -872,7 +872,6 @@ fun DraggableSignature(
                         )
                         .clip(RoundedCornerShape(6.dp))
                 )
-
                 // Icono eliminar (arriba-izq)
                 val iconScale = 1f / localScale
                 IconButton(
@@ -986,7 +985,7 @@ fun DraggableSignature(
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        Icons.Default.Tune,
+                        Icons.Default.CropRotate,
                         "Redimensionar",
                         Modifier.size(16.dp),
                         tint = Color.White
