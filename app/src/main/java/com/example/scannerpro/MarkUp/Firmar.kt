@@ -243,7 +243,7 @@ fun SignatureScreen(
 
                 // 2. LA CLAVE: Resetea la posición y la escala
                 signatureOffset = Offset.Zero
-               signatureScale = 1f // <-- Esto evita que se vuelva invisible
+                signatureScale = 1f // <-- Esto evita que se vuelva invisible
 
                 // 3. Vuelve al modo de dibujo
                 mode = SignatureMode.DRAWING
@@ -254,8 +254,8 @@ fun SignatureScreen(
                 parcelableStrokes = emptyList()
                 signatureBitmap = null
                 // 2. LA CLAVE: Resetea la posición y la escala
-              signatureOffset = Offset.Zero
-            //   signatureScale = 1f // <-- Esto evita que se vuelva invisible
+                signatureOffset = Offset.Zero
+                //   signatureScale = 1f // <-- Esto evita que se vuelva invisible
             } // <-- nuevo
         )
     }
@@ -621,7 +621,6 @@ private fun Offset.rotateRad(rad: Float): Offset {
     val s = kotlin.math.sin(rad)
     return Offset(x * c - y * s, x * s + y * c)
 }
-
 @Composable
 fun DraggableSignature(
     modifier: Modifier = Modifier,
@@ -656,14 +655,10 @@ fun DraggableSignature(
     val scaleAnim = remember { Animatable(signatureScale) }
     val rotationAnim = remember { Animatable(signatureRotation) }
 
-    // --- NUEVO: bandera para bloquear sincronía externa mientras el usuario interactúa ---
     var isInteracting by remember { mutableStateOf(false) }
-
-    // --- NUEVO: para mantener el punto tocado bajo el dedo (opcional pero evita 'saltos') ---
-    // touchOffsetInElement es la posición dentro de la caja cuando el usuario toca (en px, local coords top-left)
     var touchOffsetInElement by remember { mutableStateOf<Offset?>(null) }
 
-    // sincronizar solo si no estamos interactuando (y con pequeña tolerancia EPS para evitar micro-saltos)
+    // sincronizar solo si no estamos interactuando (sin cambios)
     val EPS = 0.5f
     LaunchedEffect(signatureOffset) {
         if (!isInteracting) {
@@ -679,7 +674,6 @@ fun DraggableSignature(
                 scaleAnim.snapTo(signatureScale)
             }
         } else {
-            // si estamos interactuando aún actualizamos el animatable para evitar discrepancias post-drag
             scaleAnim.snapTo(localScale)
         }
     }
@@ -694,21 +688,21 @@ fun DraggableSignature(
         }
     }
 
-    // dims
+    // dims (sin cambios)
     val bmpWidthPx = sigBmp.width.toFloat()
     val bmpHeightPx = sigBmp.height.toFloat()
     val bmpWidthDp = with(density) { sigBmp.width.toDp() }
     val bmpHeightDp = with(density) { sigBmp.height.toDp() }
 
-    // overlay bounds (para tap fuera)
+    // overlay bounds (sin cambios)
     var sigTopLeft by remember { mutableStateOf(Offset.Zero) }
     var sigSize by remember { mutableStateOf(IntSize.Zero) }
 
-    // acumulador para mezcla (como antes)
+    // acumulador para mezcla (sin cambios)
     var accumulatedDrag by remember { mutableStateOf(Offset.Zero) }
 
     Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        // overlay para detectar toque fuera (igual que antes)...
+        // overlay para detectar toque fuera (sin cambios)...
         if (isSignatureActive) {
             Box(
                 modifier = Modifier
@@ -737,21 +731,38 @@ fun DraggableSignature(
                     sigTopLeft = coords.localToRoot(Offset.Zero)
                     sigSize = coords.size
                 }
-                // Tap simple: activa sin bloquear scroll
+
+                // ----------- INICIO DE LA CORRECCIÓN -----------
+
+                // Gesto 1: Tap para Activar.
+                // Este detector SIEMPRE está activo.
                 .pointerInput(Unit) {
-                    detectTapGestures(onTap = { onIsSignatureActiveChange(true) })
+                    detectTapGestures(
+                        onTap = {
+                            // Si no está activa, la activamos.
+                            // Si ya estaba activa, este tap no hace nada,
+                            // lo cual es correcto.
+                            if (!isSignatureActive) {
+                                onIsSignatureActiveChange(true)
+                            }
+                        }
+                    )
                 }
-                // Drag sobre la firma: siempre activo, inicia arrastre inmediatamente
-                .pointerInput(Unit) {
+
+                // Gesto 2: Drag para Mover (el cuerpo de la firma).
+                // Este detector SÓLO se adjunta si la firma ESTÁ ACTIVA.
+                .pointerInput(isSignatureActive) {
+                    // Si no está activa, este detector de gestos no hace nada.
+                    if (!isSignatureActive) return@pointerInput
+
+                    // Si está activa, adjuntamos el detector de arrastre.
                     detectDragGestures(
                         onDragStart = { start ->
-                            // marcar interacción global
+                            // Como ya está activa, solo iniciamos la interacción.
                             isInteracting = true
-                            // capturar posición dentro del elemento para que el dedo quede en el mismo punto
                             touchOffsetInElement = start
                         },
                         onDragEnd = {
-                            // terminar interacción
                             isInteracting = false
                             touchOffsetInElement = null
                             onDragEnd(localOffset)
@@ -762,17 +773,19 @@ fun DraggableSignature(
                             onDragEnd(localOffset)
                         },
                         onDrag = { change, dragAmount ->
+                            // Si el 'handle' (hijo) consumió el evento,
+                            // dragAmount será Offset.Zero y no haremos nada.
+                            if (dragAmount == Offset.Zero) return@detectDragGestures
+
                             change.consume()
-
-                            // Si tenemos touchOffsetInElement, usar arrastre por deltas (esto mantiene el punto bajo el dedo)
-                            // localOffset += dragAmount es correcto porque detectDragGestures entrega deltas consistentes
                             localOffset = localOffset + dragAmount
-
-                            // Notificamos al padre en vivo (si quieres reducir jitter, podrías throttlear aquí)
                             onTransformChange(localOffset, localScale, localRotation)
                         }
                     )
                 }
+
+                // ----------- FIN DE LA CORRECCIÓN -----------
+
                 .graphicsLayer(
                     translationX = localOffset.x,
                     translationY = localOffset.y,
@@ -782,7 +795,7 @@ fun DraggableSignature(
                     transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0f) // TopStart
                 )
         ) {
-            // Imagen
+            // Imagen (sin cambios)
             Box(modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(6.dp))) {
                 androidx.compose.foundation.Image(
                     bitmap = sigBmp,
@@ -792,7 +805,7 @@ fun DraggableSignature(
                 )
             }
 
-            // controles visibles si está activa
+            // controles visibles si está activa (sin cambios)
             if (isSignatureActive) {
                 Box(modifier = Modifier.matchParentSize().border(3.dp, Color(0xFF00C853), RoundedCornerShape(6.dp)).clip(RoundedCornerShape(6.dp)))
 
@@ -811,7 +824,7 @@ fun DraggableSignature(
                         .size(28.dp)
                 ) { Icon(Icons.Default.Close, "Eliminar", tint = Color.White) }
 
-                // HANDLE (mezcla scale/rotate) — sin cambios salvo marcar isInteracting aquí también
+                // HANDLE (mezcla scale/rotate) — sin cambios en la lógica interna
                 var isHandleDragging by remember { mutableStateOf(false) }
                 Box(
                     modifier = Modifier
@@ -820,11 +833,13 @@ fun DraggableSignature(
                             scaleX = iconScale
                             scaleY = iconScale
                             translationX = with(density) { 8.dp.toPx() } * iconScale
-                            translationY = with(density) { 8.dp.toPx() } * iconScale
+                            translationY = with(density) { 8.dp.toPx() }* iconScale
                         }
                         .size(36.dp)
                         .clip(CircleShape)
                         .background(if (isHandleDragging) Color(0xFF616161) else Color(0xFF414141))
+                        // Este detector SÓLO existe porque está dentro de
+                        // if (isSignatureActive), lo cual es correcto.
                         .pointerInput(isSignatureActive) {
                             detectDragGestures(
                                 onDragStart = {
@@ -858,6 +873,8 @@ fun DraggableSignature(
                                     coroutineScope.launch { onDragEnd(localOffset) }
                                 },
                                 onDrag = { change, dragAmount ->
+                                    // CRUCIAL: El 'consume()' del hijo (handle)
+                                    // evita que el 'onDrag' del padre (imagen) se ejecute.
                                     change.consume()
                                     accumulatedDrag = accumulatedDrag + dragAmount
                                     val ax = kotlin.math.abs(accumulatedDrag.x)
@@ -898,6 +915,8 @@ fun DraggableSignature(
         }
     }
 }
+
+
 
 
 
@@ -1054,7 +1073,7 @@ private operator fun Offset.minus(other: Offset) = Offset(x - other.x, y - other
 
 
 
-        private fun snapToStep(value: Float, step: Float): Float {
+private fun snapToStep(value: Float, step: Float): Float {
     if (step <= 0f) return value
     return ( (value / step).roundToInt() * step )
 }
