@@ -456,7 +456,7 @@ private fun PlacingContent(
         signatureBitmap?.let { sigBmp ->
             if (isInitialPosSet) {
                 DraggableSignature(
-                    modifier = Modifier.fillMaxSize(),
+                   // modifier = Modifier.fillMaxSize(),
                     sigBmp = sigBmp,
                     signatureOffset = signatureScreenOffset,
                     signatureScale = signatureScale,
