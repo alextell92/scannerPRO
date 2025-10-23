@@ -709,7 +709,7 @@ fun DraggableSignature(
                 }
                 .size(width = bmpWidthDp, height = bmpHeightDp)
                 // (Omitimos onGloballyPositioned ya que no lo usamos para bounds aquí)
-
+                .background(Color.Red.copy(alpha = 0.4f))
                 // ----------- INICIO DE LA CORRECCIÓN -----------
 
                 // Gesto 1: Tap para Activar (y consumir el evento)
@@ -1093,7 +1093,7 @@ private fun SignatureDrawingCanvas(
     onAddStroke: (List<Offset>) -> Unit
 ) {
     var currentStroke by remember { mutableStateOf<List<Offset>>(emptyList()) }
-
+    var isDrawing by remember { mutableStateOf(false) }
     Canvas(
         modifier = modifier
             .fillMaxWidth()
@@ -1101,28 +1101,23 @@ private fun SignatureDrawingCanvas(
             .pointerInput(Unit) {
                 detectDragGestures(
                     onDragStart = { offset ->
-                        if (offset.x in 0f..size.width.toFloat() && offset.y in 0f..size.height.toFloat()) {
-                            currentStroke = listOf(offset)
-                        }
+                        currentStroke = listOf(offset) // Inicia el trazo
                     },
                     onDrag = { change: PointerInputChange, _ ->
-                        val position = change.position
-                        val isInside =
-                            position.x in 0f..size.width.toFloat() && position.y in 0f..size.height.toFloat()
-
-                        if (isInside) {
-                            currentStroke = currentStroke + position
-                        } else {
-                            if (currentStroke.isNotEmpty()) {
-                                onAddStroke(currentStroke)
-                                currentStroke = emptyList()
-                            }
-                        }
+                        currentStroke = currentStroke + change.position // Añade todos los puntos
                         change.consume()
                     },
                     onDragEnd = {
-                        if (currentStroke.isNotEmpty()) {
-                            onAddStroke(currentStroke)
+                        val canvasSize = this.size // Obtiene el tamaño real del Canvas
+
+                        // FILTRA el trazo al final para eliminar puntos "fantasma"
+                        val filteredStroke = currentStroke.filter { point ->
+                            point.x in 0f..canvasSize.width.toFloat() &&
+                                    point.y in 0f..canvasSize.height.toFloat()
+                        }
+
+                        if (filteredStroke.size > 1) {
+                            onAddStroke(filteredStroke)
                         }
                         currentStroke = emptyList()
                     },
@@ -1311,18 +1306,23 @@ private fun captureSignature(strokes: List<List<Offset>>, color: Color, strokeWi
     var right = Float.NEGATIVE_INFINITY
     var bottom = Float.NEGATIVE_INFINITY
 
+    val halfStroke = strokeWidth / 2f
+
     paths.forEach { path ->
         val b = path.getBounds()
-        left = min(left, b.left)
-        top = min(top, b.top)
-        right = max(right, b.right)
-        bottom = max(bottom, b.bottom)
+        // Inflamos los bounds para incluir el grosor de la tinta
+        left = min(left, b.left - halfStroke)
+        top = min(top, b.top - halfStroke)
+        right = max(right, b.right + halfStroke)
+        bottom = max(bottom, b.bottom + halfStroke)
     }
 
     if (left == Float.POSITIVE_INFINITY) return ImageBitmap(1, 1)
 
     val bounds = Rect(left, top, right, bottom)
-    val padding = strokeWidth * 4
+
+    val padding = 2f
+
     val bitmapWidth = ((bounds.width + padding * 2).toInt()).coerceAtLeast(1)
     val bitmapHeight = ((bounds.height + padding * 2).toInt()).coerceAtLeast(1)
 
