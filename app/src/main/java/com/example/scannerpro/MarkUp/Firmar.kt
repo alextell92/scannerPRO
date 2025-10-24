@@ -636,8 +636,8 @@ fun DraggableSignature(
     // Sensibilidades / límites / snap config
     val SENSITIVITY_SCALE = 0.0035f
     val SENSITIVITY_ROT = 0.0045f
-    val MIN_SCALE = 0.3f
-    val MAX_SCALE = 5f
+    val MIN_SCALE = 0.1f
+    val MAX_SCALE = 1.2f
     val SNAP_SCALE_STEP = 0.05f
     val SNAP_ROT_DEG = 10f
     val MIX_EXP = 1.25f
@@ -702,17 +702,20 @@ fun DraggableSignature(
                     // NO scaleX/scaleY aquí (el .size ya incorpora scale)
                 }
                 .background(Color.Red.copy(alpha = 0.35f))
+
+
                 // Tap para activar la firma (consume la pulsación)
-                .pointerInput(Unit) {
-                    detectTapGestures(onTap = {
-                        if (!isSignatureActive) onIsSignatureActiveChange(true)
-                    })
-                }
-                // Drag para mover la firma (solo si está activa)
-                .pointerInput(isSignatureActive) {
-                    if (!isSignatureActive) return@pointerInput
+                .pointerInput(Unit) { // Clave Unit: El detector NUNCA se reinicia
                     detectDragGestures(
                         onDragStart = { start ->
+                            // 3. ¡AQUÍ ESTÁ LA MAGIA!
+                            // No importa si está activo o no,
+                            // si empezamos a arrastrar la firma, se activa.
+                            if (!isSignatureActive) {
+                                onIsSignatureActiveChange(true)
+                            }
+
+                            // Lógica de drag normal
                             isInteracting = true
                             touchOffsetInElement = start
                         },
@@ -727,8 +730,12 @@ fun DraggableSignature(
                             onDragEnd(localOffset)
                         },
                         onDrag = { change, dragAmount ->
-                            // Esta lógica de "mover" está perfecta, no se toca
+                            // 4. LÓGICA DE PRIORIDAD (LA CLAVE DE LOS ICONOS)
+                            // Si el hijo (el handle) consumió el gesto,
+                            // dragAmount será Zero y el padre (la firma) NO se moverá.
                             if (dragAmount == Offset.Zero) return@detectDragGestures
+
+                            // Si el hijo no lo consumió, el padre se mueve.
                             change.consumePositionChange()
                             localOffset += dragAmount
                             onTransformChange(localOffset, localScale, localRotation)
