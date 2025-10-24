@@ -621,9 +621,9 @@ private fun PlacingContent(
 fun DraggableSignature(
     modifier: Modifier = Modifier,
     sigBmp: ImageBitmap,
-    signatureOffset: Offset,
-    signatureScale: Float,
-    signatureRotation: Float, // radianes
+    signatureOffset: Offset, // top-left absoluto en px (del padre)
+    signatureScale: Float,   // scale proveniente del padre
+    signatureRotation: Float, // radianes, proveniente del padre
     onTransformChange: (newOffset: Offset, newScale: Float, newRotation: Float) -> Unit,
     isSignatureActive: Boolean,
     onIsSignatureActiveChange: (Boolean) -> Unit,
@@ -633,7 +633,7 @@ fun DraggableSignature(
     val density = LocalDensity.current
     val coroutineScope = rememberCoroutineScope()
 
-    // --- Parámetros de gestos ---
+    // Sensibilidades / límites / snap config
     val SENSITIVITY_SCALE = 0.0035f
     val SENSITIVITY_ROT = 0.0045f
     val MIN_SCALE = 0.3f
@@ -643,92 +643,74 @@ fun DraggableSignature(
     val MIX_EXP = 1.25f
     val snapAnimSpec = spring<Float>(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium)
 
-    // --- Estados locales sincronizados ---
+    // bmp dims px
+    val bmpWidthPx = sigBmp.width.toFloat()
+    val bmpHeightPx = sigBmp.height.toFloat()
+
+    // estados locales (sincronizados con padre cuando no se interactúa)
     var localOffset by remember { mutableStateOf(signatureOffset) }
     var localScale by remember { mutableStateOf(signatureScale) }
-    var localRotation by remember { mutableStateOf(signatureRotation) }
+    var localRotation by remember { mutableStateOf(signatureRotation) } // radianes
 
-    val scaleAnim = remember { Animatable(signatureScale) }
-    val rotationAnim = remember { Animatable(signatureRotation) }
+    val scaleAnim = remember { Animatable(localScale) }
+    val rotationAnim = remember { Animatable(localRotation) }
 
     var isInteracting by remember { mutableStateOf(false) }
+    var isHandleDragging by remember { mutableStateOf(false) }
     var touchOffsetInElement by remember { mutableStateOf<Offset?>(null) }
+    var accumulatedDrag by remember { mutableStateOf(Offset.Zero) }
 
-    // --- Sincronización con el estado del padre ---
-    // (Sincroniza solo si el usuario no está interactuando activamente)
-    val EPS = 0.5f // Pixel tolerance para offset
+    // Sincronizar desde el padre cuando no interactuamos
     LaunchedEffect(signatureOffset) {
         if (!isInteracting) {
-            if ((localOffset - signatureOffset).getDistance() > EPS) {
+            if ((localOffset - signatureOffset).getDistance() > 0.5f) {
                 localOffset = signatureOffset
             }
         }
     }
     LaunchedEffect(signatureScale) {
-        if (!isInteracting) {
-            if (kotlin.math.abs(localScale - signatureScale) > 1e-3f) {
-                localScale = signatureScale
-                scaleAnim.snapTo(signatureScale)
-            }
-        } else {
+        if (!isInteracting && kotlin.math.abs(localScale - signatureScale) > 1e-3f) {
+            localScale = signatureScale
+            scaleAnim.snapTo(signatureScale)
+        } else if (isInteracting) {
             scaleAnim.snapTo(localScale)
         }
     }
     LaunchedEffect(signatureRotation) {
-        if (!isInteracting) {
-            if (kotlin.math.abs(localRotation - signatureRotation) > 1e-3f) {
-                localRotation = signatureRotation
-                rotationAnim.snapTo(signatureRotation)
-            }
-        } else {
+        if (!isInteracting && kotlin.math.abs(localRotation - signatureRotation) > 1e-3f) {
+            localRotation = signatureRotation
+            rotationAnim.snapTo(signatureRotation)
+        } else if (isInteracting) {
             rotationAnim.snapTo(localRotation)
         }
     }
 
-    // --- Dimensiones ---
-    val bmpWidthPx = sigBmp.width.toFloat()
-    val bmpHeightPx = sigBmp.height.toFloat()
-    val bmpWidthDp = with(density) { sigBmp.width.toDp() }
-    val bmpHeightDp = with(density) { sigBmp.height.toDp() }
+    // Helpers locales para dp conversion del tamaño visible
+    val displayWidthDp = with(density) { (bmpWidthPx * localScale).toDp() }
+    val displayHeightDp = with(density) { (bmpHeightPx * localScale).toDp() }
 
-    var accumulatedDrag by remember { mutableStateOf(Offset.Zero) }
-
-    Box(
-        modifier = modifier.fillMaxSize(),
-        //contentAlignment = Alignment.Center
-    ) {
-
-        // --- Contenedor de la Firma ---
+    Box(modifier = modifier.fillMaxSize()) {
+        // Contenedor que representa la firma (layout YA reflejando localScale)
         Box(
             modifier = Modifier
-                .offset {
-                    IntOffset(
-                        localOffset.x.roundToInt(),
-                        localOffset.y.roundToInt()
-                    )
+                // top-left absoluto dentro del contenedor
+                .offset { IntOffset(localOffset.x.roundToInt(), localOffset.y.roundToInt()) }
+                .size(width = displayWidthDp, height = displayHeightDp)
+                .graphicsLayer {
+                    rotationZ = Math.toDegrees(localRotation.toDouble()).toFloat()
+                    transformOrigin = TransformOrigin(0.5f, 0.5f) // <-- pivote en el centro
+                    // NO scaleX/scaleY aquí (el .size ya incorpora scale)
                 }
-                .size(width = bmpWidthDp, height = bmpHeightDp)
-                // (Omitimos onGloballyPositioned ya que no lo usamos para bounds aquí)
-                .background(Color.Red.copy(alpha = 0.4f))
-                // ----------- INICIO DE LA CORRECCIÓN -----------
-
-                // Gesto 1: Tap para Activar (y consumir el evento)
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = {
-                        Log.e(TAG, "Clic detectado SOBRE la firma.");
-                        if (!isSignatureActive) {
-                            onIsSignatureActiveChange(true)
-                        }
-                    }
-                )
-
-                // Gesto 2: Drag para Mover (el cuerpo de la firma).
-                // Este detector SÓLO se adjunta si la firma ESTÁ ACTIVA.
+                .background(Color.Red.copy(alpha = 0.35f))
+                // Tap para activar la firma (consume la pulsación)
+                .pointerInput(Unit) {
+                    detectTapGestures(onTap = {
+                        if (!isSignatureActive) onIsSignatureActiveChange(true)
+                    })
+                }
+                // Drag para mover la firma (solo si está activa)
                 .pointerInput(isSignatureActive) {
-                    if (!isSignatureActive) return@pointerInput // No hacer nada si está inactiva
-
+                    if (!isSignatureActive) return@pointerInput
                     detectDragGestures(
                         onDragStart = { start ->
                             isInteracting = true
@@ -745,79 +727,74 @@ fun DraggableSignature(
                             onDragEnd(localOffset)
                         },
                         onDrag = { change, dragAmount ->
-                            // Si el 'handle' (hijo) consumió el evento,
-                            // dragAmount será Offset.Zero y no haremos nada.
+                            // Esta lógica de "mover" está perfecta, no se toca
                             if (dragAmount == Offset.Zero) return@detectDragGestures
-
-                            change.consume() // Consume el drag
+                            change.consumePositionChange()
                             localOffset += dragAmount
                             onTransformChange(localOffset, localScale, localRotation)
                         }
                     )
                 }
-
-                // ----------- FIN DE LA CORRECCIÓN -----------
-
-                .graphicsLayer(
-                    // translationX y translationY YA NO VAN AQUÍ
-                    scaleX = localScale,
-                    scaleY = localScale,
-                    rotationZ = Math.toDegrees(localRotation.toDouble()).toFloat(),
-                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0f) // TopStart
-                )
         ) {
-            // --- Contenido Visual de la Firma ---
-            Box(modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(6.dp))) {
-                Image(
-                    bitmap = sigBmp,
-                    contentDescription = "Firma",
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Fit
-                )
-            }
+            // Imagen que ocupa todo el container (ya escalada por .size)
+            Image(
+                bitmap = sigBmp,
+                contentDescription = "Firma",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Fit
+            )
 
-            // --- Controles (Borde y Botones) ---
-            // Solo se muestran si la firma está activa
+            // Borde verde que ahora coincide exactamente con la imagen visible
             if (isSignatureActive) {
-                // Borde verde
                 Box(
                     modifier = Modifier
                         .matchParentSize()
                         .border(3.dp, Color(0xFF00C853), RoundedCornerShape(6.dp))
                         .clip(RoundedCornerShape(6.dp))
                 )
+            }
 
-                // Botón de Eliminar (TopStart)
-                val iconScale = 1f / localScale
+            // Botón eliminar (top-start) y handle (bottom-end)
+            if (isSignatureActive) {
+                // val iconScale = 1f / localScale // <-- YA NO SE USA
+
                 IconButton(
                     onClick = onDeleteSignature,
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .graphicsLayer {
-                            scaleX = iconScale
-                            scaleY = iconScale
-                            translationX = with(density) { -14.dp.toPx() } * iconScale
-                            translationY = with(density) { -14.dp.toPx() } * iconScale
+                            // --- CORRECCIÓN 1: Iconos ---
+                            // scaleX = iconScale // <-- ELIMINADO
+                            // scaleY = iconScale // <-- ELIMINADO
+                            // La traslación SÍ debe escalarse para que el icono
+                            // quede "fuera" del borde proporcionalmente
+                            val iconTranslate = 1f / localScale
+                            translationX = with(density) { -14.dp.toPx() } * iconTranslate
+                            translationY = with(density) { -14.dp.toPx() } * iconTranslate
                         }
                         .background(Color(0xFF2C2C2E), CircleShape)
                         .size(28.dp)
-                ) { Icon(Icons.Default.Close, "Eliminar", tint = Color.White) }
+                ) {
+                    Icon(Icons.Default.Close, "Eliminar", tint = Color.White)
+                }
 
-                // Handle de Scale/Rotate (BottomEnd)
-                var isHandleDragging by remember { mutableStateOf(false) }
+                // Handle bottom-end: escala/rotación mezclada
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .graphicsLayer {
-                            scaleX = iconScale
-                            scaleY = iconScale
-                            translationX = with(density) { 8.dp.toPx() } * iconScale
-                            translationY = with(density) { 8.dp.toPx() } * iconScale
+                            // --- CORRECCIÓN 1: Iconos ---
+                            // val inv = iconScale // <-- ELIMINADO
+                            // scaleX = inv; scaleY = inv // <-- ELIMINADO
+                            // La traslación SÍ debe escalarse
+                            val iconTranslate = 1f / localScale
+                            translationX = with(density) { 8.dp.toPx() } * iconTranslate
+                            translationY = with(density) { 8.dp.toPx() } * iconTranslate
                         }
                         .size(36.dp)
                         .clip(CircleShape)
                         .background(if (isHandleDragging) Color(0xFF616161) else Color(0xFF414141))
-                        .pointerInput(isSignatureActive) { // Solo activo si la firma lo está
+                        .pointerInput(isSignatureActive) {
                             detectDragGestures(
                                 onDragStart = {
                                     isHandleDragging = true
@@ -828,17 +805,38 @@ fun DraggableSignature(
                                     isHandleDragging = false
                                     isInteracting = false
                                     accumulatedDrag = Offset.Zero
-                                    // Animación de "snap"
+                                    // Snap animado
                                     coroutineScope.launch {
                                         scaleAnim.snapTo(localScale)
                                         rotationAnim.snapTo(localRotation)
                                         val targetScale = snapToStep(localScale, SNAP_SCALE_STEP).coerceIn(MIN_SCALE, MAX_SCALE)
-                                        val targetRot = Math.toRadians(snapToStep(Math.toDegrees(localRotation.toDouble()).toFloat(), SNAP_ROT_DEG).toDouble()).toFloat()
+                                        val targetRotDeg = snapToStep(Math.toDegrees(localRotation.toDouble()).toFloat(), SNAP_ROT_DEG)
+                                        val targetRot = Math.toRadians(targetRotDeg.toDouble()).toFloat()
+
+                                        // --- CORRECCIÓN 3: onDragEnd ---
+                                        // Centro global ANTES del snap (estado actual)
+                                        val preSnapW = bmpWidthPx * scaleAnim.value // (localScale antes del snap)
+                                        val preSnapH = bmpHeightPx * scaleAnim.value
+                                        val preSnapCenterLocal = Offset(preSnapW / 2f, preSnapH / 2f)
+                                        // El centro global es el offset + el centro local (sin rotación)
+                                        val curCenterGlobal = localOffset + preSnapCenterLocal // <-- SIN .rotateRad()
+
                                         val j1 = launch { scaleAnim.animateTo(targetScale, animationSpec = snapAnimSpec) }
                                         val j2 = launch { rotationAnim.animateTo(targetRot, animationSpec = snapAnimSpec) }
                                         j1.join(); j2.join()
+
                                         localScale = scaleAnim.value
                                         localRotation = rotationAnim.value
+
+                                        // Centro local DESPUÉS del snap (estado final)
+                                        val postSnapW = bmpWidthPx * localScale // (localScale después del snap)
+                                        val postSnapH = bmpHeightPx * localScale
+                                        val postSnapCenterLocal = Offset(postSnapW / 2f, postSnapH / 2f)
+
+                                        // El nuevo offset es el centro que mantuvimos fijo, menos el nuevo centro local
+                                        val newOffset = curCenterGlobal - postSnapCenterLocal // <-- SIN .rotateRad()
+
+                                        localOffset = newOffset
                                         onTransformChange(localOffset, localScale, localRotation)
                                         onDragEnd(localOffset)
                                     }
@@ -850,14 +848,12 @@ fun DraggableSignature(
                                     coroutineScope.launch { onDragEnd(localOffset) }
                                 },
                                 onDrag = { change, dragAmount ->
-                                    // CRUCIAL: El 'consume()' del hijo (handle)
-                                    // evita que el 'onDrag' del padre (imagen) se ejecute.
-                                    change.consume()
+                                    change.consumePositionChange()
                                     accumulatedDrag += dragAmount
-                                    val ax = kotlin.math.abs(accumulatedDrag.x)
-                                    val ay = kotlin.math.abs(accumulatedDrag.y)
-                                    if (ax + ay == 0f) return@detectDragGestures
 
+                                    val ax = abs(accumulatedDrag.x)
+                                    val ay = abs(accumulatedDrag.y)
+                                    if (ax + ay == 0f) return@detectDragGestures
                                     val axp = ax.toDouble().pow(MIX_EXP.toDouble()).toFloat()
                                     val ayp = ay.toDouble().pow(MIX_EXP.toDouble()).toFloat()
                                     val sum = (axp + ayp).coerceAtLeast(1e-6f)
@@ -867,16 +863,28 @@ fun DraggableSignature(
                                     val dx = dragAmount.x
                                     val dy = dragAmount.y
 
-                                    val scaleDeltaFactor = 1f + dx * SENSITIVITY_SCALE * mixScale
-                                    val newScale = (localScale * scaleDeltaFactor).coerceIn(MIN_SCALE, MAX_SCALE)
-
+                                    val newScale = (localScale * (1f + dx * SENSITIVITY_SCALE * mixScale)).coerceIn(MIN_SCALE, MAX_SCALE)
                                     val newRotation = localRotation + dy * SENSITIVITY_ROT * mixRot
 
-                                    // Compensar offset por el cambio de centro
-                                    val centerLocal = Offset(bmpWidthPx / 2f, bmpHeightPx / 2f)
-                                    val curCenterGlobal = localOffset + (centerLocal.rotateRad(localRotation) * localScale)
-                                    val newOffset = curCenterGlobal - (centerLocal.rotateRad(newRotation) * newScale)
+                                    // --- CORRECCIÓN 2: onDrag (Handle) ---
+                                    // Compensación SÓLO por escala, ya que origin(0.5, 0.5) maneja la rotación
 
+                                    // 1. Centro actual (el punto que queremos mantener fijo)
+                                    val displayW = bmpWidthPx * localScale
+                                    val displayH = bmpHeightPx * localScale
+                                    val centerLocal = Offset(displayW / 2f, displayH / 2f)
+                                    val curCenterGlobal = localOffset + centerLocal // <-- SIN .rotateRad()
+
+                                    // 2. Nuevo centro (basado en la nueva escala)
+                                    val newDisplayW = bmpWidthPx * newScale
+                                    val newDisplayH = bmpHeightPx * newScale
+                                    val newCenterLocal = Offset(newDisplayW / 2f, newDisplayH / 2f)
+
+                                    // 3. Nuevo offset es la diferencia
+                                    val newOffset = curCenterGlobal - newCenterLocal // <-- SIN .rotateRad()
+
+
+                                    // Aplicar cambios en vivo
                                     localScale = newScale
                                     localRotation = newRotation
                                     localOffset = newOffset
@@ -892,18 +900,6 @@ fun DraggableSignature(
             }
         }
     }
-}
-
-// --- Funciones Helper ---
-// (Colócalas al final de tu archivo, fuera del Composable)
-
-/**
- * Rota un Offset por un ángulo en radianes.
- */
-private fun Offset.rotateRad(rad: Float): Offset {
-    val c = kotlin.math.cos(rad)
-    val s = kotlin.math.sin(rad)
-    return Offset(x * c - y * s, x * s + y * c)
 }
 
 /**
