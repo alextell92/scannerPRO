@@ -702,7 +702,19 @@ fun DraggableSignature(
                     // NO scaleX/scaleY aquí (el .size ya incorpora scale)
                 }
                 .background(Color.Red.copy(alpha = 0.35f))
-
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null, // Sin efecto ripple
+                    onClick = {
+                        // Si no está activa, la activamos.
+                        if (!isSignatureActive) {
+                            onIsSignatureActiveChange(true)
+                        }
+                        // Si ya estaba activa, este tap no hace nada,
+                        // pero "consume" el clic, evitando que el
+                        // overlay de "clic fuera" lo reciba.
+                    }
+                )
 
                 // Tap para activar la firma (consume la pulsación)
                 .pointerInput(Unit) { // Clave Unit: El detector NUNCA se reinicia
@@ -775,9 +787,8 @@ fun DraggableSignature(
                             // scaleY = iconScale // <-- ELIMINADO
                             // La traslación SÍ debe escalarse para que el icono
                             // quede "fuera" del borde proporcionalmente
-                            val iconTranslate = 1f / localScale
-                            translationX = with(density) { -14.dp.toPx() } * iconTranslate
-                            translationY = with(density) { -14.dp.toPx() } * iconTranslate
+                            translationX = with(density) { -14.dp.toPx() } // <-- QUITA * iconTranslate
+                            translationY = with(density) { -14.dp.toPx() } // <-- QUITA * iconTranslate
                         }
                         .background(Color(0xFF2C2C2E), CircleShape)
                         .size(28.dp)
@@ -794,9 +805,8 @@ fun DraggableSignature(
                             // val inv = iconScale // <-- ELIMINADO
                             // scaleX = inv; scaleY = inv // <-- ELIMINADO
                             // La traslación SÍ debe escalarse
-                            val iconTranslate = 1f / localScale
-                            translationX = with(density) { 8.dp.toPx() } * iconTranslate
-                            translationY = with(density) { 8.dp.toPx() } * iconTranslate
+                            translationX = with(density) { 8.dp.toPx() } // <-- QUITA * iconTranslate
+                            translationY = with(density) { 8.dp.toPx() } // <-- QUITA * iconTranslate
                         }
                         .size(36.dp)
                         .clip(CircleShape)
