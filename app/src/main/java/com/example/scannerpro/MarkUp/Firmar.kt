@@ -705,17 +705,16 @@ fun DraggableSignature(
 
 
                 // Tap para activar la firma (consume la pulsación)
-                .pointerInput(Unit) { // Clave Unit: El detector NUNCA se reinicia
+                // ... (después de .background(...))
+                .pointerInput(Unit) { // <-- Clave Unit
                     detectDragGestures(
                         onDragStart = { start ->
-                            // 3. ¡AQUÍ ESTÁ LA MAGIA!
-                            // No importa si está activo o no,
-                            // si empezamos a arrastrar la firma, se activa.
+                            // 1. Activa la firma si no lo está
                             if (!isSignatureActive) {
                                 onIsSignatureActiveChange(true)
                             }
 
-                            // Lógica de drag normal
+                            // 2. Lógica de drag normal del padre
                             isInteracting = true
                             touchOffsetInElement = start
                         },
@@ -730,18 +729,17 @@ fun DraggableSignature(
                             onDragEnd(localOffset)
                         },
                         onDrag = { change, dragAmount ->
-                            // 4. LÓGICA DE PRIORIDAD (LA CLAVE DE LOS ICONOS)
-                            // Si el hijo (el handle) consumió el gesto,
-                            // dragAmount será Zero y el padre (la firma) NO se moverá.
+                            // 3. ¡LA CLAVE! Si el hijo consumió (dragAmount=0), el padre CEDE.
                             if (dragAmount == Offset.Zero) return@detectDragGestures
 
-                            // Si el hijo no lo consumió, el padre se mueve.
+                            // 4. Si el hijo no consumió, el padre se mueve
                             change.consumePositionChange()
                             localOffset += dragAmount
                             onTransformChange(localOffset, localScale, localRotation)
                         }
                     )
                 }
+
         ) {
             // Imagen que ocupa todo el container (ya escalada por .size)
             Image(
@@ -804,6 +802,9 @@ fun DraggableSignature(
                         .pointerInput(isSignatureActive) {
                             detectDragGestures(
                                 onDragStart = {
+                                    if (!isSignatureActive) {
+                                        onIsSignatureActiveChange(true)
+                                    }
                                     isHandleDragging = true
                                     isInteracting = true
                                     accumulatedDrag = Offset.Zero
@@ -855,9 +856,9 @@ fun DraggableSignature(
                                     coroutineScope.launch { onDragEnd(localOffset) }
                                 },
                                 onDrag = { change, dragAmount ->
+                                    // 2. ¡LA CLAVE! El hijo CONSUME el gesto
                                     change.consumePositionChange()
                                     accumulatedDrag += dragAmount
-
                                     val ax = abs(accumulatedDrag.x)
                                     val ay = abs(accumulatedDrag.y)
                                     if (ax + ay == 0f) return@detectDragGestures
@@ -923,130 +924,6 @@ private fun snapToStep(value: Float, step: Float): Float {
 
 
 
-
-// ------------------ DraggableSignature (con logs adicionales y sensibilidad aumentada) ------------------
-// ------------------ DraggableSignature (CORREGIDO) ------------------
-@Composable
-private fun DraggableSignature2(
-    modifier: Modifier = Modifier,
-    sigBmp: ImageBitmap,
-    signatureOffset: Offset, // Lee directamente del padre
-    signatureScale: Float,   // Lee directamente del padre
-    signatureRotation: Float, // Lee directamente del padre
-    onTransformChange: (Offset, Float, Float) -> Unit,
-    isSignatureActive: Boolean,
-    onIsSignatureActiveChange: (Boolean) -> Unit,
-    onDeleteSignature: () -> Unit,
-    onDragEnd: (Offset) -> Unit
-) {
-    val density = LocalDensity.current
-    val minScale = 0.3f
-    val maxScale = 5.0f
-
-    Box(modifier = modifier) {
-        Image(
-            bitmap = sigBmp,
-            contentDescription = "Firma",
-            modifier = Modifier
-                .graphicsLayer {
-                    // Usa los props directamente, no estados locales
-                    translationX = signatureOffset.x
-                    translationY = signatureOffset.y
-                    scaleX = signatureScale
-                    scaleY = signatureScale
-                    rotationZ = signatureRotation
-                }
-                .size(
-                    width = with(density) { sigBmp.width.toDp() },
-                    height = with(density) { sigBmp.height.toDp() }
-                )
-                .pointerInput(Unit) {
-                    // Gesto para activar con un toque
-                    detectTapGestures(
-                        onTap = {
-                            if (!isSignatureActive) onIsSignatureActiveChange(true)
-                        }
-                    )
-                }
-                .pointerInput(Unit) {
-                    // Gesto para transformar (mover, escalar, rotar)
-                    detectTransformGestures { centroid, pan, zoom, rotation ->
-                        if (!isSignatureActive) onIsSignatureActiveChange(true)
-
-                        val newScale = (signatureScale * zoom).coerceIn(minScale, maxScale)
-
-                        val newRotation = signatureRotation + rotation
-
-                        // El cálculo ahora usa el offset y escala del padre directamente
-                        val newOffset = signatureOffset + (centroid - signatureOffset) -
-                                ((centroid - signatureOffset).rotateBy(-rotation) * (signatureScale / newScale)) + pan
-
-                        // Notifica al padre INMEDIATAMENTE
-                        onTransformChange(newOffset, newScale, newRotation)
-                        onDragEnd(newOffset)
-                    }
-                }
-        )
-
-        // Contenedor del borde y los botones (sin cambios, ya funciona bien)
-        Box(
-            modifier = Modifier
-                .graphicsLayer {
-                    translationX = signatureOffset.x
-                    translationY = signatureOffset.y
-                    scaleX = signatureScale
-                    scaleY = signatureScale
-                    rotationZ = signatureRotation
-                }
-                .size(
-                    width = with(density) { sigBmp.width.toDp() },
-                    height = with(density) { sigBmp.height.toDp() }
-                )
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .border(2.dp, if (isSignatureActive) Color(0xFF30D5C8) else Color.Transparent, RoundedCornerShape(4.dp))
-            )
-
-            // Botones que mantienen su tamaño gracias a la escala inversa
-            if (isSignatureActive) {
-                val iconScale = 1f / signatureScale
-
-                IconButton(
-                    onClick = onDeleteSignature,
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .graphicsLayer {
-                            scaleX = iconScale
-                            scaleY = iconScale
-                            translationX = with(density) { -16.dp.toPx() } * iconScale
-                            translationY = with(density) { -16.dp.toPx() } * iconScale
-                        }
-                        .background(Color(0xFF2C2C2E), CircleShape)
-                        .size(24.dp)
-                ) { Icon(Icons.Default.Close, "Eliminar", tint = Color.White) }
-
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .graphicsLayer {
-                            scaleX = iconScale
-                            scaleY = iconScale
-                            translationX = with(density) { 8.dp.toPx() } * iconScale
-                            translationY = with(density) { 8.dp.toPx() } * iconScale
-                        }
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(Color(0xFF414141)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(Icons.Default.Tune, "Redimensionar", Modifier.size(16.dp), tint = Color.White)
-                }
-            }
-        }
-    }
-}
 
 
 
