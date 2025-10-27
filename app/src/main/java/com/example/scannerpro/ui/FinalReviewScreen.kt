@@ -151,7 +151,7 @@ fun FinalReviewScreen(
             // Se llama a SignatureScreen, que ahora contiene toda la lógica.
             SignatureScreen(
                 baseBitmaps = bitmaps,
-                initialPageIndex = currentPageInPageView ?: selectedIndex ?: 0,
+                initialPageIndexFromProps = currentPageInPageView ?: selectedIndex ?: 0,
                 onSignatureComplete = { pageIndex, newBitmap ->
                     bitmaps = bitmaps.toMutableList().also { it[pageIndex] = newBitmap }
                     isSignatureMode = false

@@ -1,12 +1,14 @@
 
 package com.example.scannerpro.signature
 
+// ... otros imports
+// --- AÑADÍ ESTA LÍNEA ---
+// --- FIN ---
 import android.app.Activity
 import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
 import android.os.Parcelable
 import android.util.Log
-import androidx.annotation.OptIn
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.VectorConverter
@@ -16,12 +18,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.awaitTouchSlopOrCancellation
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
-import androidx.compose.foundation.gestures.forEachGesture
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -42,7 +40,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Divider
-import androidx.compose.material.TextButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Check
@@ -62,9 +59,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -91,13 +88,9 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerInputChange
-import androidx.compose.ui.input.pointer.changedToDownIgnoreConsumed
-import androidx.compose.ui.input.pointer.changedToUp
-import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.consumePositionChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -107,21 +100,16 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.unit.toSize
-import androidx.media3.common.util.UnstableApi
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.parcelize.Parcelize
 import kotlin.math.abs
-import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.roundToInt
-import kotlin.math.sin
-
 import kotlin.math.pow
+import kotlin.math.roundToInt
 
-
+// ...
 private const val TAG = "SignatureDebug"
 @Parcelize
 private data class ParcelableOffset(val x: Float, val y: Float) : Parcelable {
@@ -151,7 +139,7 @@ enum class HandleMode { UNDECIDED, SCALE, ROTATE }
 @Composable
 fun SignatureScreen(
     baseBitmaps: List<Bitmap>,
-    initialPageIndex: Int,
+    initialPageIndexFromProps: Int,
     onSignatureComplete: (Int, Bitmap) -> Unit,
     onCancel: () -> Unit
 ) {
@@ -181,6 +169,8 @@ fun SignatureScreen(
 
 
     val activity = LocalContext.current as? Activity
+    var activePageIndex by rememberSaveable { mutableStateOf(initialPageIndexFromProps) }
+
     DisposableEffect(activity) {
         val originalOrientation = activity?.requestedOrientation
         onDispose {
@@ -231,7 +221,7 @@ fun SignatureScreen(
     } else { // PLACING mode
         PlacingContent(
             baseBitmaps = baseBitmaps,
-            initialPageIndex = initialPageIndex,
+            initialPageIndex = activePageIndex,
             signatureBitmap = signatureBitmap,
             signatureOffset = signatureOffset,
             signatureScale = signatureScale,
@@ -256,12 +246,14 @@ fun SignatureScreen(
                 mode = SignatureMode.DRAWING
             },
             onSignatureComplete = onSignatureComplete,
-            onRequestDrawing = {
+            onRequestDrawing = { currentPageIndex ->
                 mode = SignatureMode.DRAWING
                 parcelableStrokes = emptyList()
                 signatureBitmap = null
                 // 2. LA CLAVE: Resetea la posición y la escala
                 signatureOffset = Offset.Zero
+
+                activePageIndex = currentPageIndex
                 //   signatureScale = 1f // <-- Esto evita que se vuelva invisible
             } // <-- nuevo
         )
@@ -338,7 +330,7 @@ private fun PlacingContent(
     onCancel: () -> Unit,
     onDeleteSignature: () -> Unit,
     onSignatureComplete: (Int, Bitmap) -> Unit,
-    onRequestDrawing: () -> Unit
+    onRequestDrawing: (currentPageIndex: Int) -> Unit
 ) {
 
     // Al inicio de PlacingContent (antes de Box), añade:
@@ -353,6 +345,27 @@ private fun PlacingContent(
 
     val lazyListState = rememberLazyListState(initialFirstVisibleItemIndex = initialPageIndex)
     val density = LocalDensity.current
+
+    val currentPageIndex by remember {
+        derivedStateOf {
+            val layoutInfo = lazyListState.layoutInfo
+            val visibleItems = layoutInfo.visibleItemsInfo
+            if (visibleItems.isEmpty()) {
+                // Si no hay nada, usa el índice inicial o el de la firma
+                initialPageIndex
+            } else {
+                // Calcula el centro del viewport
+                val viewportCenterY =
+                    layoutInfo.viewportStartOffset + layoutInfo.viewportSize.height / 2
+
+                // Encuentra el item (página) cuyo centro está más cerca del centro del viewport
+                visibleItems.minByOrNull {
+                    val itemCenterY = it.offset + it.size / 2
+                    abs(itemCenterY - viewportCenterY)
+                }?.index ?: initialPageIndex // Fallback
+            }
+        }
+    }
 
     // --- FUENTE DE LA VERDAD para la posición LÓGICA ---
     var signatureRelative by rememberSaveable(stateSaver = OffsetSaver) { mutableStateOf(Offset(0.5f, 0.5f)) }
@@ -492,7 +505,8 @@ private fun PlacingContent(
                         modifier = Modifier
                             .fillMaxSize()
                             .shadow(4.dp, RoundedCornerShape(2.dp))
-                            .background(Color.White, RoundedCornerShape(2.dp)),
+                            // --- CAMBIO 4: Fondo de la página a Negro ---
+                            .background(Color(0xFF333333), RoundedCornerShape(2.dp)),      // --- FIN CAMBIO 4 ---
                         contentScale = ContentScale.Fit
                     )
                 }
@@ -598,7 +612,7 @@ private fun PlacingContent(
                 )
             }
             Text(
-                "Página ${finalPageIndex + 1} de ${baseBitmaps.size}",
+                "Página ${currentPageIndex + 1} de ${baseBitmaps.size}",
                 color = Color.White,
                 modifier = Modifier
                     .background(Color.Black.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
@@ -626,7 +640,7 @@ private fun PlacingContent(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier
                             .width(64.dp)
-                            .clickable { onRequestDrawing() }
+                            .clickable { onRequestDrawing(currentPageIndex) }
                             .padding(vertical = 4.dp)
                     ) {
                         Icon(
