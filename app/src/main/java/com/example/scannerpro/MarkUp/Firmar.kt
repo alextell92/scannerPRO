@@ -269,52 +269,51 @@ fun SignatureScreen(
         PlacingContent(
             baseBitmaps = baseBitmaps,
             initialPageIndex = activePageIndex,
-            signatureBitmap = signatureBitmap,
-            signatureOffset = signatureOffset,
-            signatureScale = signatureScale,
-            signatureRotation = signatureRotation,       // <--- AÑADIR
-            isSignatureActive = isSignatureActive,     // <--- AÑADIR
-            isInitialPosSet = isInitialPosSet, // Pasa el flag
-            savedSignatures = savedSignatures, // Pasa las firmas guardadas
 
-            onRotationChange = { signatureRotation = it }, // <--- AÑADIR
-            onIsSignatureActiveChange = { isSignatureActive = it }, // <--- AÑADIR
+            // --- PASA EL NUEVO ESTADO ---
+            instances = signatureInstances,
+            activeInstanceId = activeSignatureId,
+            savedSignatures = savedSignatures,
+            // --- FIN NUEVO ESTADO ---
 
-            onOffsetChange = { signatureOffset = it },
-            onScaleChange = { signatureScale = it },
-            onInitialPosSet = { isInitialPosSet = true }, // Callback para actualizar el flag
             onCancel = onCancel,
-            onDeleteSignature = {
-                // 1. Borra los datos de la firma actual
-                parcelableStrokes = emptyList()
-                signatureBitmap = null
+            onSignatureComplete = onSignatureComplete, // El guardado final se maneja dentro de PlacingContent
 
-                // 2. LA CLAVE: Resetea la posición y la escala
-                signatureOffset = Offset.Zero
-                signatureScale = 1f // <-- Esto evita que se vuelva invisible
-
-                // 3. Vuelve al modo de dibujo
-                mode = SignatureMode.DRAWING
-            },
-            onSignatureComplete = onSignatureComplete,
+            // --- LAMBDAS DE MANEJO DE ESTADO ---
             onRequestDrawing = { currentPageIndex ->
                 mode = SignatureMode.DRAWING
                 parcelableStrokes = emptyList()
-                signatureBitmap = null
-                // 2. LA CLAVE: Resetea la posición y la escala
-                signatureOffset = Offset.Zero
-
                 activePageIndex = currentPageIndex
-                //   signatureScale = 1f // <-- Esto evita que se vuelva invisible
-            }, // <-- nuevo
-            onSavedSignatureSelected = { selectedBmp ->
-                signatureBitmap = selectedBmp     // Pone la firma seleccionada
-                signatureScale = 1f             // Resetea escala
-                signatureRotation = 0f          // Resetea rotación
-                signatureOffset = Offset.Zero     // Resetea offset
-                isInitialPosSet = false         // ¡Importante! Fuerza el recentrado
-                parcelableStrokes = emptyList() // No viene de trazos
+            },
+            onInstanceAdd = { bitmapToAdd, pageIndex ->
+                val newInstance = SignatureInstance(
+                    bitmap = bitmapToAdd,
+                    pageIndex = pageIndex,
+                    relativeOffset = Offset(0.5f, 0.5f),
+                    scale = 0.8f,
+                    rotation = 0f
+                )
+                signatureInstances = signatureInstances + newInstance
+                activeSignatureId = newInstance.id
+            },
+            onInstanceUpdate = { updatedInstance ->
+                signatureInstances = signatureInstances.map {
+                    if (it.id == updatedInstance.id) updatedInstance else it
+                }
+            },
+            onInstanceDelete = { instanceId ->
+                signatureInstances = signatureInstances.filterNot { it.id == instanceId }
+                if (activeSignatureId == instanceId) {
+                    activeSignatureId = null
+                }
+            },
+            onInstanceActivate = { instanceId ->
+                activeSignatureId = instanceId
+            },
+            onDeactivate = {
+                activeSignatureId = null
             }
+            // --- FIN LAMBDAS ---
         )
     }
 }
@@ -372,79 +371,157 @@ private fun DrawingContent(
         )
     }
 }
+// --- REEMPLAZA TU PlacingContent CON ESTA ---
 
 @Composable
 private fun PlacingContent(
     baseBitmaps: List<Bitmap>,
     initialPageIndex: Int,
-    signatureBitmap: ImageBitmap?,
-    signatureOffset: Offset,
-    signatureScale: Float,
-    signatureRotation: Float,
-    isSignatureActive: Boolean,
-    // --- MODIFICADO ---
-    isInitialPosSet: Boolean, // Recibe el flag
-    savedSignatures: List<ImageBitmap>, // Recibe las firmas
-    // --- FIN MODIFICADO ---
-    onOffsetChange: (Offset) -> Unit,
-    onScaleChange: (Float) -> Unit,
-    onRotationChange: (Float) -> Unit,
-    onIsSignatureActiveChange: (Boolean) -> Unit,
-    // --- NUEVO ---
-    onInitialPosSet: () -> Unit, // Callback para notificar que se centró
-    // --- FIN NUEVO ---
+
+    // --- NUEVO ESTADO ---
+    instances: List<SignatureInstance>,
+    activeInstanceId: String?,
+    savedSignatures: List<ImageBitmap>,
+    // --- FIN NUEVO ESTADO ---
+
     onCancel: () -> Unit,
-    onDeleteSignature: () -> Unit,
     onSignatureComplete: (Int, Bitmap) -> Unit,
     onRequestDrawing: (currentPageIndex: Int) -> Unit,
-    // --- NUEVO ---
-    onSavedSignatureSelected: (ImageBitmap) -> Unit // Recibe el callback
+
+    // --- NUEVAS LAMBDAS ---
+    onInstanceAdd: (bitmap: ImageBitmap, pageIndex: Int) -> Unit,
+    onInstanceUpdate: (SignatureInstance) -> Unit,
+    onInstanceDelete: (String) -> Unit,
+    onInstanceActivate: (String) -> Unit,
+    onDeactivate: () -> Unit
+    // --- FIN NUEVAS LAMBDAS ---
 ) {
-
-    // Al inicio de PlacingContent (antes de Box), añade:
-    var lastUserInteraction by remember { mutableStateOf(0L) }
-    val COOLDOWN_MS = 300L                // ignora correcciones durante 300 ms tras interacción
-    val OFFSET_SNAP_THRESHOLD = 6f        // sólo corregir si la diferencia es mayor a 6 px
-
-    // Animatable para hacer transiciones suaves (recordado para no recrearlo cada scroll)
-    val offsetAnim = remember { Animatable(Offset(0f, 0f), Offset.VectorConverter) }
 
     val lazyListState = rememberLazyListState(initialFirstVisibleItemIndex = initialPageIndex)
     val density = LocalDensity.current
 
-    // Cálculo de la página visible actualmente
     val currentPageIndex by remember {
         derivedStateOf {
             val layoutInfo = lazyListState.layoutInfo
             val visibleItems = layoutInfo.visibleItemsInfo
             if (visibleItems.isEmpty()) {
-                // Si no hay nada, usa el índice inicial o el de la firma
                 initialPageIndex
             } else {
-                // Calcula el centro del viewport
                 val viewportCenterY = layoutInfo.viewportStartOffset + layoutInfo.viewportSize.height / 2
-
-                // Encuentra el item (página) cuyo centro está más cerca del centro del viewport
                 visibleItems.minByOrNull {
                     val itemCenterY = it.offset + it.size / 2
                     abs(itemCenterY - viewportCenterY)
-                }?.index ?: initialPageIndex // Fallback
+                }?.index ?: initialPageIndex
             }
         }
     }
 
-    // --- FUENTE DE LA VERDAD para la posición LÓGICA ---
-    var signatureRelative by rememberSaveable(stateSaver = OffsetSaver) { mutableStateOf(Offset(0.5f, 0.5f)) }
-    var finalPageIndex by rememberSaveable { mutableStateOf(initialPageIndex) }
-    // ---
+    // La página en la que se guardará (la que tiene la firma activa o la visible)
+    val finalPageIndex = remember(activeInstanceId, currentPageIndex, instances) {
+        activeInstanceId?.let { id ->
+            instances.firstOrNull { it.id == id }?.pageIndex
+        } ?: currentPageIndex
+    }
 
-    // Flag para la configuración INICIAL
-    // var isInitialPosSet by rememberSaveable(signatureBitmap) { mutableStateOf(false) }
     var containerIntSize by remember { mutableStateOf(IntSize(0, 0)) }
     var showSubmenu by rememberSaveable { mutableStateOf(false) }
-
     var bottomBarHeightPx by remember { mutableStateOf(0f) }
     val bottomBarHeightDp = with(LocalDensity.current) { bottomBarHeightPx.toDp() }
+
+    // --- Funciones de Ayuda para Coordenadas ---
+
+    /**
+     * Calcula las dimensiones y la posición de la imagen de la página DENTRO del contenedor
+     */
+    fun computePageLayout(
+        pageIndex: Int,
+        base: Bitmap
+    ): Rect? { // Devuelve (left, top, right, bottom) del layout de la página
+        if (containerIntSize.width == 0 || containerIntSize.height == 0) return null
+
+        val visibleItem = lazyListState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == pageIndex }
+            ?: return null // La página no está visible
+
+        val pagePaddingPx = with(density) { 16.dp.toPx() } // Asumimos padding
+        val viewWidth = (containerIntSize.width - (pagePaddingPx * 2)).coerceAtLeast(1f)
+        val viewHeight = (containerIntSize.height - (pagePaddingPx * 2)).coerceAtLeast(1f)
+        val bitmapAspectRatio = base.width.toFloat() / base.height.toFloat()
+        val viewAspectRatio = viewWidth / viewHeight
+
+        val (scaledW, scaledH) = if (bitmapAspectRatio > viewAspectRatio) {
+            viewWidth to viewWidth / bitmapAspectRatio
+        } else {
+            viewHeight * bitmapAspectRatio to viewHeight
+        }
+
+        val imageLeft = (containerIntSize.width - scaledW) / 2f
+        val imageTop = (visibleItem.offset) + (containerIntSize.height - scaledH) / 2f
+
+        return Rect(left = imageLeft, top = imageTop, right = imageLeft + scaledW, bottom = imageTop + scaledH)
+    }
+
+    /**
+     * Convierte la posición LÓGICA (relativa) de una firma a su posición ABSOLUTA (en pantalla)
+     */
+    fun computeAbsoluteOffsetFromRelative(
+        instance: SignatureInstance,
+        pageLayout: Rect
+    ): Offset {
+        val scaledW = pageLayout.width
+        val scaledH = pageLayout.height
+
+        // 1. Centro de la firma en coordenadas de la imagen (0-N)
+        val centerXOnImage = instance.relativeOffset.x * scaledW
+        val centerYOnImage = instance.relativeOffset.y * scaledH
+
+        // 2. Centro de la firma en coordenadas de la pantalla (absoluto)
+        val centerXOnScreen = pageLayout.left + centerXOnImage
+        val centerYOnScreen = pageLayout.top + centerYOnImage
+
+        // 3. Top-left de la firma en coordenadas de la pantalla (absoluto)
+        val sigDrawW = instance.bitmap.width * instance.scale
+        val sigDrawH = instance.bitmap.height * instance.scale
+        return Offset(centerXOnScreen - sigDrawW / 2f, centerYOnScreen - sigDrawH / 2f)
+    }
+
+    /**
+     * Convierte la posición ABSOLUTA (de pantalla) de una firma a su posición LÓGICA (relativa)
+     */
+    fun convertAbsoluteToRelative(
+        absOffset: Offset,
+        scale: Float,
+        bitmap: ImageBitmap
+    ): Pair<Int, Offset> { // Devuelve (newPageIndex, newRelativeOffset)
+
+        val sigDrawW = bitmap.width * scale
+        val sigDrawH = bitmap.height * scale
+        val centerX = absOffset.x + sigDrawW / 2f
+        val centerY = absOffset.y + sigDrawH / 2f
+
+        val visible = lazyListState.layoutInfo.visibleItemsInfo
+        if (visible.isEmpty()) return 0 to Offset(0.5f, 0.5f) // Fallback
+
+        // Encuentra la página más cercana al centro de la firma
+        val targetItem = visible.minByOrNull { item ->
+            val itemCenterY = item.offset + item.size / 2
+            abs(itemCenterY - centerY)
+        } ?: visible.first()
+
+        val pageIndex = targetItem.index
+        val base = baseBitmaps.getOrNull(pageIndex) ?: return pageIndex to Offset(0.5f, 0.5f)
+
+        // Calcula el layout de ESA página
+        val pageLayout = computePageLayout(pageIndex, base) ?: return pageIndex to Offset(0.5f, 0.5f)
+
+        // Convierte
+        val relX = (centerX - pageLayout.left) / pageLayout.width
+        val relY = (centerY - pageLayout.top) / pageLayout.height
+
+        return pageIndex to Offset(relX.coerceIn(0f, 1f), relY.coerceIn(0f, 1f))
+    }
+
+    // --- FIN Funciones de Ayuda ---
+
 
     // --- El `Box` raíz para el overlay ---
     Box(modifier = Modifier.fillMaxSize()) {
@@ -466,19 +543,14 @@ private fun PlacingContent(
             ) {
                 IconButton(onClick = onCancel) {
                     Icon(
-                        Icons.Default.Close,
-                        "Cancelar",
-                        tint = Color.White,
-                        modifier = Modifier
-                            .background(Color.Black.copy(alpha = 0.3f), CircleShape)
-                            .padding(4.dp)
+                        Icons.Default.Close, "Cancelar", tint = Color.White,
+                        modifier = Modifier.background(Color.Black.copy(alpha = 0.3f), CircleShape).padding(4.dp)
                     )
                 }
                 Text(
-                    "Página ${currentPageIndex + 1} de ${baseBitmaps.size}",
+                    "Página ${finalPageIndex + 1} de ${baseBitmaps.size}",
                     color = Color.White,
-                    modifier = Modifier
-                        .background(Color.Black.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                    modifier = Modifier.background(Color.Black.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
                         .padding(horizontal = 8.dp, vertical = 4.dp)
                 )
             }
@@ -487,105 +559,18 @@ private fun PlacingContent(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f) // Ocupa el espacio restante
-                    .clipToBounds() // Recorta todo lo que se salga
-                    .onGloballyPositioned { // Mide el tamaño de esta área
+                    .weight(1f)
+                    .clipToBounds()
+                    .onGloballyPositioned {
                         containerIntSize = it.size
                     }
             ) {
-                // --- El resto (LazyColumn, Overlay, Firma) va DENTRO de este Box ---
-
-                fun computeImageLayoutForPage(base: Bitmap): Pair<Float, Float> {
-                    val pagePaddingPx = with(density) { 16.dp.toPx() }
-                    val viewWidth = (containerIntSize.width - (pagePaddingPx * 2)).coerceAtLeast(1f)
-                    val viewHeight = (containerIntSize.height - (pagePaddingPx * 2)).coerceAtLeast(1f)
-                    val bitmapAspectRatio = base.width.toFloat() / base.height.toFloat()
-                    val viewAspectRatio = viewWidth / viewHeight
-                    return if (bitmapAspectRatio > viewAspectRatio) {
-                        Pair(viewWidth, viewWidth / bitmapAspectRatio)
-                    } else {
-                        Pair(viewHeight * bitmapAspectRatio, viewHeight)
-                    }
-                }
-
-
-                fun computeAbsoluteOffsetFromRelative(
-                    pageIndex: Int,
-                    relative: Offset,
-                    signatureBmp: ImageBitmap?,
-                    sigScale: Float
-                ): Offset? {
-                    val base = baseBitmaps.getOrNull(pageIndex) ?: return null
-                    if (containerIntSize.width == 0 || containerIntSize.height == 0 || signatureBmp == null) return null
-
-                    val visibleItem =
-                        lazyListState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == pageIndex }
-                            ?: return null
-
-                    val (scaledW, scaledH) = computeImageLayoutForPage(base)
-
-                    val imageLeft = (containerIntSize.width - scaledW) / 2f
-                    val imageTop = (visibleItem.offset) + (containerIntSize.height - scaledH) / 2f
-                    val centerX = imageLeft + relative.x * scaledW
-                    val centerY = imageTop + relative.y * scaledH
-                    val sigDrawW = signatureBmp.width * sigScale
-                    val sigDrawH = signatureBmp.height * sigScale
-                    return Offset(centerX - sigDrawW / 2f, centerY - sigDrawH / 2f)
-                }
-
-
-                // LaunchedEffect para la configuración INICIAL
-                LaunchedEffect(signatureBitmap, containerIntSize) {
-                    if (isInitialPosSet || signatureBitmap == null || containerIntSize.width == 0) return@LaunchedEffect
-
-                    snapshotFlow { lazyListState.layoutInfo.visibleItemsInfo.isNotEmpty() }
-                        .first { it }
-
-                    val initialScale = (containerIntSize.width * 0.60f) / signatureBitmap.width
-                    val initialOffset = computeAbsoluteOffsetFromRelative(
-                        initialPageIndex,
-                        Offset(0.5f, 0.5f),
-                        signatureBitmap,
-                        initialScale
-                    )
-
-                    initialOffset?.let {
-                        signatureRelative = Offset(0.5f, 0.5f)
-                        finalPageIndex = initialPageIndex
-                        onOffsetChange(it)
-                        onScaleChange(initialScale)
-                        onInitialPosSet() // Notifica al padre que ya se centró
-                    }
-                }
-
-
-                // --- EFFECT CLAVE QUE ARREGLA EL SCROLL ---
-                LaunchedEffect(
-                    lazyListState.firstVisibleItemScrollOffset,
-                    lazyListState.firstVisibleItemIndex,
-                    isSignatureActive // No actualices si el usuario está arrastrando
-                ) {
-                    if (isSignatureActive || !isInitialPosSet || signatureBitmap == null) return@LaunchedEffect
-
-                    val currentTargetOffset = computeAbsoluteOffsetFromRelative(
-                        finalPageIndex,
-                        signatureRelative,
-                        signatureBitmap,
-                        signatureScale
-                    )
-
-                    if (currentTargetOffset != null && (currentTargetOffset - signatureOffset).getDistance() > 1.0f) {
-                        onOffsetChange(currentTargetOffset)
-                    }
-                }
-                // --- FIN DEL EFFECT DEL SCROLL ---
-
 
                 // Documento (scrollable)
                 LazyColumn(
                     state = lazyListState,
-                    modifier = Modifier.fillMaxSize(), // Llena el Box contenedor
-                    userScrollEnabled = !isSignatureActive
+                    modifier = Modifier.fillMaxSize(),
+                    userScrollEnabled = (activeInstanceId == null) // Desactiva scroll si se arrastra una firma
                 ) {
                     items(count = baseBitmaps.size, key = { index -> index }) { index ->
                         val pageBitmap = baseBitmaps[index]
@@ -601,102 +586,86 @@ private fun PlacingContent(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .shadow(4.dp, RoundedCornerShape(2.dp))
-                                    .background(
-                                        Color(0xFF333333),
-                                        RoundedCornerShape(2.dp)
-                                    ), // <-- Fondo gris
+                                    .background(Color(0xFF333333), RoundedCornerShape(2.dp)),
                                 contentScale = ContentScale.Fit
                             )
                         }
                     }
                 }
 
-                // Overlay para detectar taps fuera de la firma...
-                if (isSignatureActive) {
+                // Overlay para detectar taps fuera (desactivar)
+                if (activeInstanceId != null) {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
                             .pointerInput(Unit) {
                                 detectTapGestures {
-                                    Log.e(
-                                        TAG,
-                                        "Clic detectado FUERA de la firma (en overlay). Desactivando."
+                                    Log.e(TAG, "Clic detectado FUERA. Desactivando.")
+                                    onDeactivate()
+                                }
+                            }
+                    )
+                }
+
+                // --- RENDERIZADO DE MÚLTIPLES FIRMAS ---
+                // Dibuja las firmas que están en páginas visibles
+                instances.forEach { instance ->
+                    val baseBmp = baseBitmaps.getOrNull(instance.pageIndex) ?: return@forEach
+                    val pageLayout = computePageLayout(instance.pageIndex, baseBmp)
+
+                    // Dibuja solo si la página está visible (layout != null)
+                    pageLayout?.let {
+                        // Calcula el offset absoluto actual
+                        val absoluteOffset = computeAbsoluteOffsetFromRelative(instance, it)
+
+                        DraggableSignature(
+                            //key = instance.id, // ¡Importante para el rendimiento!
+                            sigBmp = instance.bitmap,
+                            signatureOffset = absoluteOffset, // Se actualiza con el scroll
+                            signatureScale = instance.scale,
+                            signatureRotation = instance.rotation,
+                            isSignatureActive = (instance.id == activeInstanceId),
+
+                            onIsSignatureActiveChange = {
+                                if (it) onInstanceActivate(instance.id) else onDeactivate()
+                            },
+                            onDeleteSignature = {
+                                onInstanceDelete(instance.id)
+                            },
+                            onTransformChange = { newAbsOffset, newScale, newRotation ->
+                                // Convierte el drag a estado lógico
+                                val (newPageIndex, newRelativeOffset) =
+                                    convertAbsoluteToRelative(newAbsOffset, newScale, instance.bitmap)
+
+                                // Envía el estado actualizado al padre
+                                onInstanceUpdate(
+                                    instance.copy(
+                                        pageIndex = newPageIndex,
+                                        relativeOffset = newRelativeOffset,
+                                        scale = newScale,
+                                        rotation = newRotation
                                     )
-                                    onIsSignatureActiveChange(false)
-                                }
+                                )
+                            },
+                            onDragEnd = { finalAbsOffset ->
+                                // La lógica ya está en onTransformChange
+                                // Opcional: podrías querer hacer un "snap" aquí
                             }
-                    )
+                        )
+                    }
                 }
+                // --- FIN RENDERIZADO DE FIRMAS ---
 
-
-                // --- Firma con renderizado condicional ---
-                val currentAbsoluteOffset = if (isInitialPosSet && signatureBitmap != null) {
-                    computeAbsoluteOffsetFromRelative(
-                        finalPageIndex, signatureRelative, signatureBitmap, signatureScale
-                    )
-                } else {
-                    null
-                }
-
-                // Dibuja la firma SÓLO SI su página está visible
-                if (currentAbsoluteOffset != null && signatureBitmap != null) {
-                    DraggableSignature(
-                        sigBmp = signatureBitmap,
-                        signatureOffset = signatureOffset,
-                        signatureScale = signatureScale,
-                        signatureRotation = signatureRotation,
-                        isSignatureActive = isSignatureActive,
-                        onIsSignatureActiveChange = onIsSignatureActiveChange,
-                        onDeleteSignature = onDeleteSignature,
-                        onTransformChange = { newOffset, newScale, newRotation ->
-                            onOffsetChange(newOffset)
-                            onScaleChange(newScale)
-                            onRotationChange(newRotation)
-
-                            val sigDrawW = signatureBitmap.width * newScale
-                            val sigDrawH = signatureBitmap.height * newScale
-                            val centerX = newOffset.x + sigDrawW / 2f
-                            val centerY = newOffset.y + sigDrawH / 2f
-
-                            val visible = lazyListState.layoutInfo.visibleItemsInfo
-                            if (visible.isNotEmpty()) {
-                                val target = visible.minByOrNull { item ->
-                                    val itemCenterY = item.offset + item.size / 2
-                                    abs(itemCenterY - centerY)
-                                } ?: visible.first()
-
-                                val pageIndex = target.index
-                                val base = baseBitmaps.getOrNull(pageIndex)
-                                if (base != null) {
-                                    val (scaledW, scaledH) = computeImageLayoutForPage(base)
-                                    val imageLeft = (containerIntSize.width - scaledW) / 2f
-                                    val imageTop =
-                                        target.offset + (containerIntSize.height - scaledH) / 2f
-                                    val relX = (centerX - imageLeft) / scaledW
-                                    val relY = (centerY - imageTop) / scaledH
-
-                                    signatureRelative =
-                                        Offset(relX.coerceIn(0f, 1f), relY.coerceIn(0f, 1f))
-                                    finalPageIndex = pageIndex
-                                }
-                            }
-                        },
-                        onDragEnd = { finalLocalOffset ->
-                            onOffsetChange(finalLocalOffset)
-                        }
-                    )
-                }
             } // --- FIN DEL BOX DE CONTENIDO ---
 
 
             // --- 3. La barra inferior (Surface) ---
-            // --- ESTA ES LA LLAVE MOVIDA ---
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
-                .onGloballyPositioned {
-                bottomBarHeightPx = it.size.height.toFloat()
-            },
+                    .onGloballyPositioned {
+                        bottomBarHeightPx = it.size.height.toFloat()
+                    },
                 color = Color(0xFF2C2C2E),
                 shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
             ) {
@@ -716,12 +685,7 @@ private fun PlacingContent(
                                 .clickable { showSubmenu = true }
                                 .padding(vertical = 4.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Receipt,
-                                contentDescription = "Firma (sello)",
-                                modifier = Modifier.size(28.dp),
-                                tint = Color.White
-                            )
+                            Icon(Icons.Default.Receipt, "Firma (sello)", Modifier.size(28.dp), tint = Color.White)
                             Spacer(modifier = Modifier.height(6.dp))
                             Text("Firma", color = Color.White, fontSize = 12.sp)
                         }
@@ -733,12 +697,7 @@ private fun PlacingContent(
                                 .clickable { /* Placeholder para fecha */ }
                                 .padding(vertical = 4.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.CalendarToday,
-                                contentDescription = "Fecha (calendario)",
-                                modifier = Modifier.size(28.dp),
-                                tint = Color.White
-                            )
+                            Icon(Icons.Default.CalendarToday, "Fecha (calendario)", Modifier.size(28.dp), tint = Color.White)
                             Spacer(modifier = Modifier.height(6.dp))
                             Text("Fecha", color = Color.White, fontSize = 12.sp)
                         }
@@ -747,16 +706,18 @@ private fun PlacingContent(
 
                         Button(
                             onClick = {
-                                if (baseBitmaps.isNotEmpty() && signatureBitmap != null) {
-                                    val finalBitmap = placeSignatureOnBitmap(
-                                        base = baseBitmaps[finalPageIndex],
-                                        signature = signatureBitmap,
-                                        signatureOffset = signatureOffset,
-                                        signatureScale = signatureScale,
-                                        signatureRotation = signatureRotation,
-                                        containerSize = containerIntSize // Esto ahora es el tamaño del Box central
+                                // --- LÓGICA DE GUARDADO FINAL ---
+                                val pageToSave = finalPageIndex
+                                val base = baseBitmaps.getOrNull(pageToSave)
+                                if (base != null) {
+                                    val finalBitmap = mergeSignaturesOnPage(
+                                        base = base,
+                                        instances = instances,
+                                        pageIndexToSave = pageToSave,
+                                        containerSize = containerIntSize,
+                                        density = density
                                     )
-                                    onSignatureComplete(finalPageIndex, finalBitmap)
+                                    onSignatureComplete(pageToSave, finalBitmap)
                                 }
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF30D5C8)),
@@ -764,12 +725,7 @@ private fun PlacingContent(
                             contentPadding = PaddingValues(12.dp),
                             modifier = Modifier.size(48.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Check,
-                                contentDescription = "Aceptar",
-                                tint = Color.White,
-                                modifier = Modifier.size(20.dp)
-                            )
+                            Icon(Icons.Default.Check, "Aceptar", Modifier.size(20.dp), tint = Color.White)
                         }
                     }
                 }
@@ -780,8 +736,6 @@ private fun PlacingContent(
 
 
         // --- 4. El Submenú (Overlay) ---
-        // --- ESTA ES LA OTRA LLAVE MOVIDA ---
-        // Está fuera de la Column, pero dentro del Box raíz.
         if (showSubmenu) {
             SignatureSubmenu(
                 savedSignatures = savedSignatures,
@@ -791,20 +745,18 @@ private fun PlacingContent(
                 },
                 onSignatureSelected = { selectedBmp ->
                     showSubmenu = false
-                    onSavedSignatureSelected(selectedBmp)
+                    // --- Llama al nuevo callback ---
+                    onInstanceAdd(selectedBmp, currentPageIndex)
                 },
                 onDismiss = {
                     showSubmenu = false
                 },
-                // --- NUEVO: Pasamos la altura medida ---
                 bottomBarHeight = bottomBarHeightDp
-                // --- FIN NUEVO ---
             )
         }
 
     } // --- FIN DEL BOX RAÍZ ---
 }
-
 
 @Composable
 fun DraggableSignature(
@@ -1552,3 +1504,95 @@ private fun SignatureSubmenu(
 }
 // --- FIN DEL REEMPLAZO ---
 // --- FIN NUEVO ---
+
+
+// --- REEMPLAZA placeSignatureOnBitmap CON ESTA ---
+
+/**
+ * Fusiona una lista de SignatureInstances en un Bitmap base.
+ * Esta función usa la posición LÓGICA (relativa) para dibujar,
+ * haciéndola independiente del estado del scroll.
+ */
+private fun mergeSignaturesOnPage(
+    base: Bitmap,
+    instances: List<SignatureInstance>, // Pasa *todas* las instancias
+    pageIndexToSave: Int,
+    containerSize: IntSize,
+    density: Density // Necesitamos la densidad para los cálculos
+): Bitmap {
+    // Filtra solo las firmas de la página que queremos guardar
+    val instancesForThisPage = instances.filter { it.pageIndex == pageIndexToSave }
+    if (instancesForThisPage.isEmpty()) {
+        Log.d(TAG, "No hay firmas para la página $pageIndexToSave, devolviendo base.")
+        return base // No hay nada que hacer
+    }
+
+    Log.d(TAG, "Fusionando ${instancesForThisPage.size} firmas en la página $pageIndexToSave.")
+
+    val resultBitmap = base.copy(Bitmap.Config.ARGB_8888, true)
+    val canvas = android.graphics.Canvas(resultBitmap)
+
+    // --- Get Page Scaling Info (basado en la lógica de computePageLayout) ---
+    // Esto calcula cómo se *vería* la página en el contenedor
+    val pagePaddingPx = with(density) { 16.dp.toPx() } // Asumimos padding
+    val viewWidth = (containerSize.width - (pagePaddingPx * 2)).coerceAtLeast(1f)
+    val viewHeight = (containerSize.height - (pagePaddingPx * 2)).coerceAtLeast(1f)
+    val bitmapAspectRatio = base.width.toFloat() / base.height.toFloat()
+    val viewAspectRatio = viewWidth / viewHeight
+
+    val (scaledW, scaledH) = if (bitmapAspectRatio > viewAspectRatio) {
+        viewWidth to viewWidth / bitmapAspectRatio
+    } else {
+        viewHeight * bitmapAspectRatio to viewHeight
+    }
+    // El ratio para convertir de "píxeles de vista escalada" a "píxeles de bitmap original"
+    val scaleRatio = base.width / scaledW
+    // --- End Scaling Info ---
+
+    // Dibuja cada firma
+    instancesForThisPage.forEach { instance ->
+        val sigBmp = instance.bitmap
+        val sigScale = instance.scale
+        val sigRot = instance.rotation // radianes
+        val relOffset = instance.relativeOffset // 0f-1f
+
+        // --- Convertir Posición Relativa (0-1f) a Coordenadas Finales del Bitmap ---
+
+        // 1. Encontrar el centro de la firma en "píxeles de vista escalada"
+        val scaledImageCenterX = relOffset.x * scaledW
+        val scaledImageCenterY = relOffset.y * scaledH
+
+        // 2. Encontrar el top-left de la firma en "píxeles de vista escalada"
+        val sigDrawW = sigBmp.width * sigScale
+        val sigDrawH = sigBmp.height * sigScale
+        val scaledImageTopLeftX = scaledImageCenterX - (sigDrawW / 2f)
+        val scaledImageTopLeftY = scaledImageCenterY - (sigDrawH / 2f)
+
+        // 3. Convertir a "píxeles de bitmap original"
+        val finalX = scaledImageTopLeftX * scaleRatio
+        val finalY = scaledImageTopLeftY * scaleRatio
+        val finalSignatureScale = sigScale * scaleRatio
+        // --- Fin Conversión ---
+
+        // --- Lógica de Dibujo (copiada de tu placeSignatureOnBitmap original) ---
+        val paint = android.graphics.Paint().apply { isAntiAlias = true }
+        val rotationInDegrees = Math.toDegrees(sigRot.toDouble()).toFloat()
+
+        // El pivote para rotar es el centro de la firma (en su nueva escala final)
+        val pivotX = (sigBmp.width / 2f) * finalSignatureScale
+        val pivotY = (sigBmp.height / 2f) * finalSignatureScale
+
+        val matrix = android.graphics.Matrix().apply {
+            // 1. Escala
+            postScale(finalSignatureScale, finalSignatureScale)
+            // 2. Rota alrededor del pivote
+            postRotate(rotationInDegrees, pivotX, pivotY)
+            // 3. Mueve a la posición top-left final
+            postTranslate(finalX, finalY)
+        }
+        canvas.drawBitmap(sigBmp.asAndroidBitmap(), matrix, paint)
+        // --- Fin Lógica de Dibujo ---
+    }
+
+    return resultBitmap
+}
