@@ -57,6 +57,13 @@ data class DocumentWithPages(
     val pages: List<Page>
 )
 
+@Entity(tableName = "signatures")
+data class Signature(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val filePath: String, // Ruta al archivo .png de la firma
+    val createdAt: Long = System.currentTimeMillis()
+)
+
 // --- DAO (Data Access Object) ---
 
 @Dao
@@ -108,11 +115,18 @@ interface DocumentDao {
         deleteDocuments(documentIds)
     }
 
+
+    @Insert
+    suspend fun insertSignature(signature: Signature)
+
+    @Query("SELECT * FROM signatures ORDER BY createdAt DESC")
+    suspend fun getAllSignatures(): List<Signature>
+
 }
 
 // --- BASE DE DATOS (ROOM) ---
 
-@Database(entities = [Document::class, Page::class], version = 1)
+@Database(entities = [Document::class, Page::class, Signature::class], version = 2)
 abstract class DocumentDatabase : RoomDatabase() {
     abstract fun documentDao(): DocumentDao
 
@@ -126,7 +140,9 @@ abstract class DocumentDatabase : RoomDatabase() {
                     context.applicationContext,
                     DocumentDatabase::class.java,
                     "document_database"
-                ).build()
+                )
+                    .fallbackToDestructiveMigration()
+                    .build()
                 INSTANCE = instance
                 instance
             }
@@ -292,6 +308,46 @@ class DocumentRepository(private val context: Context, private val documentDao: 
 
     suspend fun insertDocument(document: Document): Long {
         return documentDao.insertDocument(document)
+    }
+
+    private fun saveSignatureBitmapToFile(bitmap: Bitmap, fileName: String): String? {
+        // Usamos una carpeta separada
+        val directory = File(context.filesDir, "signatures")
+        if (!directory.exists()) {
+            directory.mkdirs()
+        }
+        val file = File(directory, fileName)
+        return try {
+            FileOutputStream(file).use { out ->
+                // Usamos PNG para guardar la transparencia de la firma
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+            }
+            file.absolutePath
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+    }
+
+
+    suspend fun saveSignature(signatureBitmap: Bitmap) {
+        val fileName = "sig_${System.currentTimeMillis()}.png"
+        val filePath = saveSignatureBitmapToFile(signatureBitmap, fileName)
+
+        if (filePath != null) {
+            val signature = Signature(filePath = filePath)
+            documentDao.insertSignature(signature)
+        }
+    }
+
+    suspend fun getAllSignatures(): List<Bitmap> {
+        return documentDao.getAllSignatures().mapNotNull { signature ->
+            try {
+                BitmapFactory.decodeFile(signature.filePath)
+            } catch (e: Exception) {
+                null
+            }
+        }
     }
 
 }

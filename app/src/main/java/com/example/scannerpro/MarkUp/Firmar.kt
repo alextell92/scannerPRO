@@ -116,6 +116,12 @@ import androidx.compose.material.icons.filled.Add // --- NUEVO ---
 import androidx.compose.ui.input.pointer.pointerInput // --- NUEVO ---
 import androidx.compose.foundation.gestures.detectTapGestures // --- NUEVO ---
 
+import androidx.compose.ui.unit.Dp // <-- Añade esta importación si falta
+import androidx.compose.foundation.layout.widthIn // <-- Añade esta importación
+import androidx.compose.material.Surface // <-- Asegúrate de usar esta (material 1)
+import java.util.UUID
+
+
 private const val TAG = "SignatureDebug"
 @Parcelize
 private data class ParcelableOffset(val x: Float, val y: Float) : Parcelable {
@@ -142,13 +148,25 @@ private enum class SignatureMode : Parcelable { DRAWING, PLACING }
 
 // estado de modo del handle: null = undecided, "SCALE" o "ROTATE"
 enum class HandleMode { UNDECIDED, SCALE, ROTATE }
+
+
+private data class SignatureInstance(
+    val id: String = UUID.randomUUID().toString(),
+    val bitmap: ImageBitmap,
+    var pageIndex: Int,
+    var relativeOffset: Offset, // Posición (0f-1f) relativa al centro de la página
+    var scale: Float,
+    var rotation: Float // En radianes
+)
+
 @Composable
 fun SignatureScreen(
     baseBitmaps: List<Bitmap>,
     initialPageIndexFromProps: Int,
     savedSignatures: List<ImageBitmap>, // Lista de firmas ya guardadas
     onSignatureComplete: (Int, Bitmap) -> Unit,
-    onCancel: () -> Unit
+    onCancel: () -> Unit,
+    onNewSignatureCreated: (Bitmap) -> Unit
 ) {
 
     var signatureRotation by rememberSaveable { mutableFloatStateOf(0f) } // <-- Ya tenías este
@@ -156,6 +174,8 @@ fun SignatureScreen(
     // --- AÑADE ESTA LÍNEA ---
     var isSignatureActive by rememberSaveable { mutableStateOf(false) }
 
+    var signatureInstances by remember { mutableStateOf<List<SignatureInstance>>(emptyList()) }
+    var activeSignatureId by rememberSaveable { mutableStateOf<String?>(null) }
 
     var mode by rememberSaveable { mutableStateOf(SignatureMode.PLACING) }
     var parcelableStrokes by rememberSaveable { mutableStateOf<List<ParcelableStroke>>(emptyList()) }
@@ -223,11 +243,25 @@ fun SignatureScreen(
             onClear = { parcelableStrokes = emptyList() },
             onConfirm = {
                 if (strokes.any { it.isNotEmpty() }) {
-                    // 1. Generamos el bitmap PRIMERO y lo guardamos en el estado.
-                    signatureBitmap = captureSignature(strokes, strokeColor, strokeWidth)
+                    val newSigImageBitmap = captureSignature(strokes, strokeColor, strokeWidth)
 
-                    // 2. AHORA cambiamos de modo.
+                    // --- LÓGICA DE AÑADIR NUEVA ---
+                    // 1. Crea la nueva instancia
+                    val newInstance = SignatureInstance(
+                        bitmap = newSigImageBitmap,
+                        pageIndex = activePageIndex,
+                        relativeOffset = Offset(0.5f, 0.5f), // Centro por defecto
+                        scale = 0.8f, // Escala por defecto
+                        rotation = 0f
+                    )
+                    // 2. Añádela a la lista
+                    signatureInstances = signatureInstances + newInstance
+                    // 3. Actívala
+                    activeSignatureId = newInstance.id
+                    // 4. Cambia de modo
                     mode = SignatureMode.PLACING
+                    // 5. Llama al callback para guardarla en la BD
+                    onNewSignatureCreated(newSigImageBitmap.asAndroidBitmap())
                 }
             }
         )
@@ -405,357 +439,370 @@ private fun PlacingContent(
     // ---
 
     // Flag para la configuración INICIAL
-   // var isInitialPosSet by rememberSaveable(signatureBitmap) { mutableStateOf(false) }
+    // var isInitialPosSet by rememberSaveable(signatureBitmap) { mutableStateOf(false) }
     var containerIntSize by remember { mutableStateOf(IntSize(0, 0)) }
     var showSubmenu by rememberSaveable { mutableStateOf(false) }
 
-    // --- El `Box` raíz se convierte en `Column` ---
-    Box(modifier = Modifier.fillMaxSize()) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFF212121))
-        // El `onGloballyPositioned` se moverá al Box del contenido
-    ) {
+    var bottomBarHeightPx by remember { mutableStateOf(0f) }
+    val bottomBarHeightDp = with(LocalDensity.current) { bottomBarHeightPx.toDp() }
 
-        // --- La barra superior (Row) se mueve al inicio de la Column ---
-        Row(
+    // --- El `Box` raíz para el overlay ---
+    Box(modifier = Modifier.fillMaxSize()) {
+
+        // --- La Columna principal de la UI ---
+        Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+                .fillMaxSize()
+                .background(Color(0xFF212121))
         ) {
-            IconButton(onClick = onCancel) {
-                Icon(
-                    Icons.Default.Close,
-                    "Cancelar",
-                    tint = Color.White,
+
+            // --- 1. La barra superior (Row) ---
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onCancel) {
+                    Icon(
+                        Icons.Default.Close,
+                        "Cancelar",
+                        tint = Color.White,
+                        modifier = Modifier
+                            .background(Color.Black.copy(alpha = 0.3f), CircleShape)
+                            .padding(4.dp)
+                    )
+                }
+                Text(
+                    "Página ${currentPageIndex + 1} de ${baseBitmaps.size}",
+                    color = Color.White,
                     modifier = Modifier
-                        .background(Color.Black.copy(alpha = 0.3f), CircleShape)
-                        .padding(4.dp)
+                        .background(Color.Black.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
                 )
             }
-            Text(
-                "Página ${currentPageIndex + 1} de ${baseBitmaps.size}",
-                color = Color.White,
+
+            // --- 2. El `Box` de contenido (con weight) ---
+            Box(
                 modifier = Modifier
-                    .background(Color.Black.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                    .fillMaxWidth()
+                    .weight(1f) // Ocupa el espacio restante
+                    .clipToBounds() // Recorta todo lo que se salga
+                    .onGloballyPositioned { // Mide el tamaño de esta área
+                        containerIntSize = it.size
+                    }
+            ) {
+                // --- El resto (LazyColumn, Overlay, Firma) va DENTRO de este Box ---
+
+                fun computeImageLayoutForPage(base: Bitmap): Pair<Float, Float> {
+                    val pagePaddingPx = with(density) { 16.dp.toPx() }
+                    val viewWidth = (containerIntSize.width - (pagePaddingPx * 2)).coerceAtLeast(1f)
+                    val viewHeight = (containerIntSize.height - (pagePaddingPx * 2)).coerceAtLeast(1f)
+                    val bitmapAspectRatio = base.width.toFloat() / base.height.toFloat()
+                    val viewAspectRatio = viewWidth / viewHeight
+                    return if (bitmapAspectRatio > viewAspectRatio) {
+                        Pair(viewWidth, viewWidth / bitmapAspectRatio)
+                    } else {
+                        Pair(viewHeight * bitmapAspectRatio, viewHeight)
+                    }
+                }
+
+
+                fun computeAbsoluteOffsetFromRelative(
+                    pageIndex: Int,
+                    relative: Offset,
+                    signatureBmp: ImageBitmap?,
+                    sigScale: Float
+                ): Offset? {
+                    val base = baseBitmaps.getOrNull(pageIndex) ?: return null
+                    if (containerIntSize.width == 0 || containerIntSize.height == 0 || signatureBmp == null) return null
+
+                    val visibleItem =
+                        lazyListState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == pageIndex }
+                            ?: return null
+
+                    val (scaledW, scaledH) = computeImageLayoutForPage(base)
+
+                    val imageLeft = (containerIntSize.width - scaledW) / 2f
+                    val imageTop = (visibleItem.offset) + (containerIntSize.height - scaledH) / 2f
+                    val centerX = imageLeft + relative.x * scaledW
+                    val centerY = imageTop + relative.y * scaledH
+                    val sigDrawW = signatureBmp.width * sigScale
+                    val sigDrawH = signatureBmp.height * sigScale
+                    return Offset(centerX - sigDrawW / 2f, centerY - sigDrawH / 2f)
+                }
+
+
+                // LaunchedEffect para la configuración INICIAL
+                LaunchedEffect(signatureBitmap, containerIntSize) {
+                    if (isInitialPosSet || signatureBitmap == null || containerIntSize.width == 0) return@LaunchedEffect
+
+                    snapshotFlow { lazyListState.layoutInfo.visibleItemsInfo.isNotEmpty() }
+                        .first { it }
+
+                    val initialScale = (containerIntSize.width * 0.60f) / signatureBitmap.width
+                    val initialOffset = computeAbsoluteOffsetFromRelative(
+                        initialPageIndex,
+                        Offset(0.5f, 0.5f),
+                        signatureBitmap,
+                        initialScale
+                    )
+
+                    initialOffset?.let {
+                        signatureRelative = Offset(0.5f, 0.5f)
+                        finalPageIndex = initialPageIndex
+                        onOffsetChange(it)
+                        onScaleChange(initialScale)
+                        onInitialPosSet() // Notifica al padre que ya se centró
+                    }
+                }
+
+
+                // --- EFFECT CLAVE QUE ARREGLA EL SCROLL ---
+                LaunchedEffect(
+                    lazyListState.firstVisibleItemScrollOffset,
+                    lazyListState.firstVisibleItemIndex,
+                    isSignatureActive // No actualices si el usuario está arrastrando
+                ) {
+                    if (isSignatureActive || !isInitialPosSet || signatureBitmap == null) return@LaunchedEffect
+
+                    val currentTargetOffset = computeAbsoluteOffsetFromRelative(
+                        finalPageIndex,
+                        signatureRelative,
+                        signatureBitmap,
+                        signatureScale
+                    )
+
+                    if (currentTargetOffset != null && (currentTargetOffset - signatureOffset).getDistance() > 1.0f) {
+                        onOffsetChange(currentTargetOffset)
+                    }
+                }
+                // --- FIN DEL EFFECT DEL SCROLL ---
+
+
+                // Documento (scrollable)
+                LazyColumn(
+                    state = lazyListState,
+                    modifier = Modifier.fillMaxSize(), // Llena el Box contenedor
+                    userScrollEnabled = !isSignatureActive
+                ) {
+                    items(count = baseBitmaps.size, key = { index -> index }) { index ->
+                        val pageBitmap = baseBitmaps[index]
+                        Box(
+                            modifier = Modifier
+                                .fillParentMaxSize()
+                                .padding(3.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Image(
+                                bitmap = pageBitmap.asImageBitmap(),
+                                contentDescription = "Documento página ${index + 1}",
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .shadow(4.dp, RoundedCornerShape(2.dp))
+                                    .background(
+                                        Color(0xFF333333),
+                                        RoundedCornerShape(2.dp)
+                                    ), // <-- Fondo gris
+                                contentScale = ContentScale.Fit
+                            )
+                        }
+                    }
+                }
+
+                // Overlay para detectar taps fuera de la firma...
+                if (isSignatureActive) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .pointerInput(Unit) {
+                                detectTapGestures {
+                                    Log.e(
+                                        TAG,
+                                        "Clic detectado FUERA de la firma (en overlay). Desactivando."
+                                    )
+                                    onIsSignatureActiveChange(false)
+                                }
+                            }
+                    )
+                }
+
+
+                // --- Firma con renderizado condicional ---
+                val currentAbsoluteOffset = if (isInitialPosSet && signatureBitmap != null) {
+                    computeAbsoluteOffsetFromRelative(
+                        finalPageIndex, signatureRelative, signatureBitmap, signatureScale
+                    )
+                } else {
+                    null
+                }
+
+                // Dibuja la firma SÓLO SI su página está visible
+                if (currentAbsoluteOffset != null && signatureBitmap != null) {
+                    DraggableSignature(
+                        sigBmp = signatureBitmap,
+                        signatureOffset = signatureOffset,
+                        signatureScale = signatureScale,
+                        signatureRotation = signatureRotation,
+                        isSignatureActive = isSignatureActive,
+                        onIsSignatureActiveChange = onIsSignatureActiveChange,
+                        onDeleteSignature = onDeleteSignature,
+                        onTransformChange = { newOffset, newScale, newRotation ->
+                            onOffsetChange(newOffset)
+                            onScaleChange(newScale)
+                            onRotationChange(newRotation)
+
+                            val sigDrawW = signatureBitmap.width * newScale
+                            val sigDrawH = signatureBitmap.height * newScale
+                            val centerX = newOffset.x + sigDrawW / 2f
+                            val centerY = newOffset.y + sigDrawH / 2f
+
+                            val visible = lazyListState.layoutInfo.visibleItemsInfo
+                            if (visible.isNotEmpty()) {
+                                val target = visible.minByOrNull { item ->
+                                    val itemCenterY = item.offset + item.size / 2
+                                    abs(itemCenterY - centerY)
+                                } ?: visible.first()
+
+                                val pageIndex = target.index
+                                val base = baseBitmaps.getOrNull(pageIndex)
+                                if (base != null) {
+                                    val (scaledW, scaledH) = computeImageLayoutForPage(base)
+                                    val imageLeft = (containerIntSize.width - scaledW) / 2f
+                                    val imageTop =
+                                        target.offset + (containerIntSize.height - scaledH) / 2f
+                                    val relX = (centerX - imageLeft) / scaledW
+                                    val relY = (centerY - imageTop) / scaledH
+
+                                    signatureRelative =
+                                        Offset(relX.coerceIn(0f, 1f), relY.coerceIn(0f, 1f))
+                                    finalPageIndex = pageIndex
+                                }
+                            }
+                        },
+                        onDragEnd = { finalLocalOffset ->
+                            onOffsetChange(finalLocalOffset)
+                        }
+                    )
+                }
+            } // --- FIN DEL BOX DE CONTENIDO ---
+
+
+            // --- 3. La barra inferior (Surface) ---
+            // --- ESTA ES LA LLAVE MOVIDA ---
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                .onGloballyPositioned {
+                bottomBarHeightPx = it.size.height.toFloat()
+            },
+                color = Color(0xFF2C2C2E),
+                shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
+            ) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Divider(modifier = Modifier.fillMaxWidth(), color = Color(0xFF1B1B1B), thickness = 1.dp)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier
+                                .width(64.dp)
+                                .clickable { showSubmenu = true }
+                                .padding(vertical = 4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Receipt,
+                                contentDescription = "Firma (sello)",
+                                modifier = Modifier.size(28.dp),
+                                tint = Color.White
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text("Firma", color = Color.White, fontSize = 12.sp)
+                        }
+
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier
+                                .width(64.dp)
+                                .clickable { /* Placeholder para fecha */ }
+                                .padding(vertical = 4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CalendarToday,
+                                contentDescription = "Fecha (calendario)",
+                                modifier = Modifier.size(28.dp),
+                                tint = Color.White
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text("Fecha", color = Color.White, fontSize = 12.sp)
+                        }
+
+                        Spacer(modifier = Modifier.weight(1f))
+
+                        Button(
+                            onClick = {
+                                if (baseBitmaps.isNotEmpty() && signatureBitmap != null) {
+                                    val finalBitmap = placeSignatureOnBitmap(
+                                        base = baseBitmaps[finalPageIndex],
+                                        signature = signatureBitmap,
+                                        signatureOffset = signatureOffset,
+                                        signatureScale = signatureScale,
+                                        signatureRotation = signatureRotation,
+                                        containerSize = containerIntSize // Esto ahora es el tamaño del Box central
+                                    )
+                                    onSignatureComplete(finalPageIndex, finalBitmap)
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF30D5C8)),
+                            shape = CircleShape,
+                            contentPadding = PaddingValues(12.dp),
+                            modifier = Modifier.size(48.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = "Aceptar",
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
+            }
+            // --- FIN DE LA SURFACE ---
+
+        } // --- FIN DE LA COLUMN PRINCIPAL ---
+
+
+        // --- 4. El Submenú (Overlay) ---
+        // --- ESTA ES LA OTRA LLAVE MOVIDA ---
+        // Está fuera de la Column, pero dentro del Box raíz.
+        if (showSubmenu) {
+            SignatureSubmenu(
+                savedSignatures = savedSignatures,
+                onCreateNew = {
+                    showSubmenu = false
+                    onRequestDrawing(currentPageIndex)
+                },
+                onSignatureSelected = { selectedBmp ->
+                    showSubmenu = false
+                    onSavedSignatureSelected(selectedBmp)
+                },
+                onDismiss = {
+                    showSubmenu = false
+                },
+                // --- NUEVO: Pasamos la altura medida ---
+                bottomBarHeight = bottomBarHeightDp
+                // --- FIN NUEVO ---
             )
         }
 
-        // --- Se crea un `Box` para el contenido que SÍ se recorta ---
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f) // Ocupa el espacio restante
-                .clipToBounds() // <-- ¡LA SOLUCIÓN! Recorta todo lo que se salga de este Box
-                .onGloballyPositioned { // <-- El listener de tamaño se mueve aquí
-                    containerIntSize = it.size
-                }
-        ) {
-            // --- El resto (LazyColumn, Overlay, Firma) va DENTRO de este Box ---
-
-            fun computeImageLayoutForPage(base: Bitmap): Pair<Float, Float> {
-                val pagePaddingPx = with(density) { 16.dp.toPx() }
-                val viewWidth = (containerIntSize.width - (pagePaddingPx * 2)).coerceAtLeast(1f)
-                val viewHeight = (containerIntSize.height - (pagePaddingPx * 2)).coerceAtLeast(1f)
-                val bitmapAspectRatio = base.width.toFloat() / base.height.toFloat()
-                val viewAspectRatio = viewWidth / viewHeight
-                return if (bitmapAspectRatio > viewAspectRatio) {
-                    Pair(viewWidth, viewWidth / bitmapAspectRatio)
-                } else {
-                    Pair(viewHeight * bitmapAspectRatio, viewHeight)
-                }
-            }
-
-
-            fun computeAbsoluteOffsetFromRelative(
-                pageIndex: Int,
-                relative: Offset,
-                signatureBmp: ImageBitmap?,
-                sigScale: Float
-            ): Offset? {
-                val base = baseBitmaps.getOrNull(pageIndex) ?: return null
-                if (containerIntSize.width == 0 || containerIntSize.height == 0 || signatureBmp == null) return null
-
-                // 1. Encuentra la página...
-                val visibleItem =
-                    lazyListState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == pageIndex }
-                        ?: return null
-
-                // 2. Llama a la función que ya existe
-                val (scaledW, scaledH) = computeImageLayoutForPage(base)
-
-                // ... (resto de la función)
-                val imageLeft = (containerIntSize.width - scaledW) / 2f
-                val imageTop = (visibleItem.offset) + (containerIntSize.height - scaledH) / 2f
-                val centerX = imageLeft + relative.x * scaledW
-                val centerY = imageTop + relative.y * scaledH
-                val sigDrawW = signatureBmp.width * sigScale
-                val sigDrawH = signatureBmp.height * sigScale
-                return Offset(centerX - sigDrawW / 2f, centerY - sigDrawH / 2f)
-            }
-
-
-            // LaunchedEffect para la configuración INICIAL
-            LaunchedEffect(signatureBitmap, containerIntSize) {
-                if (isInitialPosSet || signatureBitmap == null || containerIntSize.width == 0) return@LaunchedEffect
-
-                snapshotFlow { lazyListState.layoutInfo.visibleItemsInfo.isNotEmpty() }
-                    .first { it }
-
-                val initialScale = (containerIntSize.width * 0.60f) / signatureBitmap.width
-                val initialOffset = computeAbsoluteOffsetFromRelative(
-                    initialPageIndex,
-                    Offset(0.5f, 0.5f),
-                    signatureBitmap,
-                    initialScale
-                )
-
-                initialOffset?.let {
-                    signatureRelative = Offset(0.5f, 0.5f)
-                    finalPageIndex = initialPageIndex
-
-                    onOffsetChange(it)
-                    onScaleChange(initialScale)
-                    // --- MODIFICADO ---
-                    onInitialPosSet() // Notifica al padre que ya se centró
-                    // --- FIN MODIFICADO ---
-                }
-            }
-
-
-            // --- EFFECT CLAVE QUE ARREGLA EL SCROLL ---
-            LaunchedEffect(
-                lazyListState.firstVisibleItemScrollOffset,
-                lazyListState.firstVisibleItemIndex,
-                isSignatureActive // No actualices si el usuario está arrastrando
-            ) {
-                if (isSignatureActive || !isInitialPosSet || signatureBitmap == null) return@LaunchedEffect
-
-                val currentTargetOffset = computeAbsoluteOffsetFromRelative(
-                    finalPageIndex,
-                    signatureRelative,
-                    signatureBitmap,
-                    signatureScale
-                )
-
-                if (currentTargetOffset != null && (currentTargetOffset - signatureOffset).getDistance() > 1.0f) {
-                    onOffsetChange(currentTargetOffset)
-                }
-            }
-            // --- FIN DEL EFFECT DEL SCROLL ---
-
-
-            // Documento (scrollable)
-            LazyColumn(
-                state = lazyListState,
-                modifier = Modifier.fillMaxSize(), // Llena el Box contenedor
-                userScrollEnabled = !isSignatureActive
-            ) {
-                items(count = baseBitmaps.size, key = { index -> index }) { index ->
-                    val pageBitmap = baseBitmaps[index]
-                    Box(
-                        modifier = Modifier
-                            .fillParentMaxSize()
-                            .padding(3.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Image(
-                            bitmap = pageBitmap.asImageBitmap(),
-                            contentDescription = "Documento página ${index + 1}",
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .shadow(4.dp, RoundedCornerShape(2.dp))
-                                .background(
-                                    Color(0xFF333333),
-                                    RoundedCornerShape(2.dp)
-                                ), // <-- Fondo gris
-                            contentScale = ContentScale.Fit
-                        )
-                    }
-                }
-            }
-
-            // Overlay para detectar taps fuera de la firma...
-            if (isSignatureActive) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .pointerInput(Unit) {
-                            detectTapGestures {
-                                Log.e(
-                                    TAG,
-                                    "Clic detectado FUERA de la firma (en overlay). Desactivando."
-                                )
-                                onIsSignatureActiveChange(false)
-                            }
-                        }
-                )
-            }
-
-
-            // --- Firma con renderizado condicional ---
-            val currentAbsoluteOffset = if (isInitialPosSet && signatureBitmap != null) {
-                computeAbsoluteOffsetFromRelative(
-                    finalPageIndex, signatureRelative, signatureBitmap, signatureScale
-                )
-            } else {
-                null
-            }
-
-            // Dibuja la firma SÓLO SI su página está visible
-            if (currentAbsoluteOffset != null && signatureBitmap != null) {
-                DraggableSignature(
-                    sigBmp = signatureBitmap,
-                    signatureOffset = signatureOffset,
-                    signatureScale = signatureScale,
-                    signatureRotation = signatureRotation,
-                    isSignatureActive = isSignatureActive,
-                    onIsSignatureActiveChange = onIsSignatureActiveChange,
-                    onDeleteSignature = onDeleteSignature,
-                    onTransformChange = { newOffset, newScale, newRotation ->
-                        onOffsetChange(newOffset)
-                        onScaleChange(newScale)
-                        onRotationChange(newRotation)
-
-                        val sigDrawW = signatureBitmap.width * newScale
-                        val sigDrawH = signatureBitmap.height * newScale
-                        val centerX = newOffset.x + sigDrawW / 2f
-                        val centerY = newOffset.y + sigDrawH / 2f
-
-                        val visible = lazyListState.layoutInfo.visibleItemsInfo
-                        if (visible.isNotEmpty()) {
-                            val target = visible.minByOrNull { item ->
-                                val itemCenterY = item.offset + item.size / 2
-                                abs(itemCenterY - centerY)
-                            } ?: visible.first()
-
-                            val pageIndex = target.index
-                            val base = baseBitmaps.getOrNull(pageIndex)
-                            if (base != null) {
-                                val (scaledW, scaledH) = computeImageLayoutForPage(base)
-                                val imageLeft = (containerIntSize.width - scaledW) / 2f
-                                val imageTop =
-                                    target.offset + (containerIntSize.height - scaledH) / 2f
-                                val relX = (centerX - imageLeft) / scaledW
-                                val relY = (centerY - imageTop) / scaledH
-
-                                signatureRelative =
-                                    Offset(relX.coerceIn(0f, 1f), relY.coerceIn(0f, 1f))
-                                finalPageIndex = pageIndex
-                            }
-                        }
-                    },
-                    onDragEnd = { finalLocalOffset ->
-                        onOffsetChange(finalLocalOffset)
-                    }
-                )
-            }
-        } // --- FIN DEL BOX DE CONTENIDO ---
-    }
-
-        // --- La barra inferior (Surface) se mueve al final de la Column ---
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth(),
-            color = Color(0xFF2C2C2E),
-            shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
-        ) {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Divider(modifier = Modifier.fillMaxWidth(), color = Color(0xFF1B1B1B), thickness = 1.dp)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier
-                            .width(64.dp)
-                           // .clickable { onRequestDrawing(currentPageIndex) } // <-- Pasa la página actual
-                            .clickable { showSubmenu = true }
-                            .padding(vertical = 4.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Receipt,
-                            contentDescription = "Firma (sello)",
-                            modifier = Modifier.size(28.dp),
-                            tint = Color.White
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text("Firma", color = Color.White, fontSize = 12.sp)
-                    }
-
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier
-                            .width(64.dp)
-                            .clickable { /* Placeholder para fecha */ }
-                            .padding(vertical = 4.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.CalendarToday,
-                            contentDescription = "Fecha (calendario)",
-                            modifier = Modifier.size(28.dp),
-                            tint = Color.White
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text("Fecha", color = Color.White, fontSize = 12.sp)
-                    }
-
-                    Spacer(modifier = Modifier.weight(1f))
-
-                    Button(
-                        onClick = {
-                            if (baseBitmaps.isNotEmpty() && signatureBitmap != null) {
-                                val finalBitmap = placeSignatureOnBitmap(
-                                    base = baseBitmaps[finalPageIndex],
-                                    signature = signatureBitmap,
-                                    signatureOffset = signatureOffset,
-                                    signatureScale = signatureScale,
-                                    signatureRotation = signatureRotation,
-                                    containerSize = containerIntSize // Esto ahora es el tamaño del Box central
-                                )
-                                onSignatureComplete(finalPageIndex, finalBitmap)
-                            }
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF30D5C8)),
-                        shape = CircleShape,
-                        contentPadding = PaddingValues(12.dp),
-                        modifier = Modifier.size(48.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Check,
-                            contentDescription = "Aceptar",
-                            tint = Color.White,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                }
-            }
-            if (showSubmenu) {
-                SignatureSubmenu(
-                    savedSignatures = savedSignatures,
-                    onCreateNew = {
-                        showSubmenu = false
-                        onRequestDrawing(currentPageIndex) // Llama al callback para dibujar
-                    },
-                    onSignatureSelected = { selectedBmp ->
-                        showSubmenu = false
-                        onSavedSignatureSelected(selectedBmp) // Llama al callback de selección
-                    },
-                    onDismiss = {
-                        showSubmenu = false // Cierra el submenú
-                    }
-                )
-            }
-        }
-    } // --- FIN DEL COLUMN RAÍZ ---
+    } // --- FIN DEL BOX RAÍZ ---
 }
 
 
@@ -1425,81 +1472,83 @@ private fun captureBitmap(
 }
 
 
-// --- NUEVO ---
-/**
- * Un submenú que se muestra desde la parte inferior, ofreciendo
- * crear una nueva firma o seleccionar una existente.
- */
+
 @Composable
 private fun SignatureSubmenu(
     savedSignatures: List<ImageBitmap>,
     onCreateNew: () -> Unit,
     onSignatureSelected: (ImageBitmap) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    bottomBarHeight: Dp // <-- NUEVO: Necesitamos saber qué tan alta es la barra de abajo
 ) {
-    // Box para el overlay oscuro (clickable para descartar)
+    // Box para el overlay (para capturar clics fuera y cerrar)
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.5f))
-            // Detecta taps FUERA del menú para cerrarlo
             .pointerInput(Unit) { detectTapGestures { onDismiss() } },
-        contentAlignment = Alignment.BottomCenter
+        contentAlignment = Alignment.BottomCenter // Lo anclamos todo abajo
     ) {
-        // Columna para el contenido real del menú
-        Column(
+        // Esta es la nueva barra de selección
+        Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
-                .background(Color(0xFF2C2C2E))
-                // Consume los clics aquí para que el Box de overlay no los reciba
+                // --- LA CLAVE ---
+                // La "levantamos" exactamente la altura de la barra inferior
+                .padding(bottom = bottomBarHeight)
+                // Detenemos los clics para que no se propaguen al overlay
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
                     onClick = {}
-                )
+                ),
+            color = Color(0xFF2C2C2E), // Mismo color que la barra inferior
+            elevation = 8.dp // Le damos sombra para que parezca estar encima
         ) {
-            // 1. Botón "Crear nueva firma"
-            Row(
+            LazyRow(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { onCreateNew() }
-                    .padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(vertical = 12.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically // Centra todo verticalmente
             ) {
-                Icon(Icons.Default.Add, "Crear nueva", tint = Color.White)
-                Spacer(Modifier.width(16.dp))
-                Text("Crear nueva firma", color = Color.White, fontSize = 16.sp)
-            }
-
-            // 2. Lista de firmas guardadas (si existen)
-            if (savedSignatures.isNotEmpty()) {
-                Divider(color = Color(0xFF1B1B1B), thickness = 1.dp)
-
-                LazyRow(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 12.dp),
-                    contentPadding = PaddingValues(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    items(savedSignatures) { sigBmp ->
-                        Image(
-                            bitmap = sigBmp,
-                            contentDescription = "Firma guardada",
-                            modifier = Modifier
-                                .size(120.dp, 60.dp)
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(Color(0xFF424242)) // Fondo para las firmas
-                                .border(1.dp, Color.Gray, RoundedCornerShape(4.dp))
-                                .clickable { onSignatureSelected(sigBmp) }
-                                .padding(4.dp), // Padding interno para que la firma no toque el borde
-                            contentScale = ContentScale.Fit // Asegura que la firma se vea completa
-                        )
+                // --- Item 1: Botón "Crear nueva" ---
+                item {
+                    Column(
+                        modifier = Modifier
+                            .size(width = 72.dp, height = 64.dp) // Un buen tamaño
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF3A3A3C))
+                            .clickable { onCreateNew() }
+                            .padding(horizontal = 4.dp, vertical = 8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Icon(Icons.Default.Add, "Crear", tint = Color.White)
+                        Spacer(Modifier.height(4.dp))
+                        Text("Crear", color = Color.White, fontSize = 12.sp)
                     }
+                }
+
+                // --- Items 2...N: Las firmas guardadas ---
+                items(savedSignatures) { sigBmp ->
+                    Image(
+                        bitmap = sigBmp,
+                        contentDescription = "Firma guardada",
+                        modifier = Modifier
+                            .height(64.dp) // Misma altura que el botón "Crear"
+                            .widthIn(min = 100.dp) // Un ancho mínimo
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color.White) // <-- Fondo blanco para ver la firma
+                            .border(1.dp, Color.Gray, RoundedCornerShape(4.dp))
+                            .clickable { onSignatureSelected(sigBmp) }
+                            .padding(4.dp), // Padding interno
+                        contentScale = ContentScale.Fit
+                    )
                 }
             }
         }
     }
 }
+// --- FIN DEL REEMPLAZO ---
 // --- FIN NUEVO ---

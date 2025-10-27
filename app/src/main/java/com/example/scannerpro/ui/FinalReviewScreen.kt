@@ -81,6 +81,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -92,7 +93,9 @@ import androidx.core.content.FileProvider
 import com.example.scannerpro.Collage.CollageScreen
 import com.example.scannerpro.MarkUp.MarkupScreen
 import com.example.scannerpro.signature.SignatureScreen
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -111,6 +114,7 @@ fun FinalReviewScreen(
     onAddAnotherScan: () -> Unit,
     onFinish: () -> Unit
 ) {
+    val scope = rememberCoroutineScope()
     var bitmaps by remember { mutableStateOf(initialBitmaps) }
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -130,6 +134,16 @@ fun FinalReviewScreen(
     var isMarkupMode by rememberSaveable { mutableStateOf(false) }
     var isSignatureMode by rememberSaveable { mutableStateOf(false) }
     var currentPageInPageView by rememberSaveable { mutableStateOf<Int?>(if (bitmaps.isNotEmpty()) 0 else null) }
+
+    var mySavedSignaturesList by remember { mutableStateOf<List<ImageBitmap>>(emptyList()) }
+    LaunchedEffect(isSignatureMode) {
+        if (isSignatureMode) {
+            // Carga las firmas desde la BD cuando entras al modo
+            mySavedSignaturesList = withContext(Dispatchers.IO) {
+                repository.getAllSignatures().map { it.asImageBitmap() }
+            }
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -152,6 +166,15 @@ fun FinalReviewScreen(
             SignatureScreen(
                 baseBitmaps = bitmaps,
                 initialPageIndexFromProps = currentPageInPageView ?: selectedIndex ?: 0,
+                savedSignatures = mySavedSignaturesList,
+                onNewSignatureCreated = { newSignatureBitmap ->
+                    // Guarda la nueva firma en la BD en un hilo secundario
+                    scope.launch(Dispatchers.IO) {
+                        repository.saveSignature(newSignatureBitmap)
+                        // Opcional: Recarga la lista para que aparezca al instante
+                        mySavedSignaturesList = repository.getAllSignatures().map { it.asImageBitmap() }
+                    }
+                },
                 onSignatureComplete = { pageIndex, newBitmap ->
                     bitmaps = bitmaps.toMutableList().also { it[pageIndex] = newBitmap }
                     isSignatureMode = false
