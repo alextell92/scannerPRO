@@ -1,26 +1,25 @@
 
 package com.example.scannerpro.signature
 
+// ... otros imports
+// --- AÑADÍ ESTA LÍNEA ---
+// --- FIN ---
 import android.app.Activity
 import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
 import android.os.Parcelable
 import android.util.Log
-import androidx.annotation.OptIn
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.awaitTouchSlopOrCancellation
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
-import androidx.compose.foundation.gestures.forEachGesture
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -41,7 +40,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Divider
-import androidx.compose.material.TextButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Check
@@ -61,18 +59,20 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -89,13 +89,9 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerInputChange
-import androidx.compose.ui.input.pointer.changedToDownIgnoreConsumed
-import androidx.compose.ui.input.pointer.changedToUp
-import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.consumePositionChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -105,19 +101,20 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.unit.toSize
-import androidx.media3.common.util.UnstableApi
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.parcelize.Parcelize
 import kotlin.math.abs
-import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.roundToInt
-import kotlin.math.sin
-
 import kotlin.math.pow
+import kotlin.math.roundToInt
 
+import androidx.compose.foundation.lazy.LazyRow // --- NUEVO ---
+import androidx.compose.foundation.lazy.items // --- NUEVO ---
+import androidx.compose.material.icons.filled.Add // --- NUEVO ---
+import androidx.compose.ui.input.pointer.pointerInput // --- NUEVO ---
+import androidx.compose.foundation.gestures.detectTapGestures // --- NUEVO ---
 
 private const val TAG = "SignatureDebug"
 @Parcelize
@@ -148,7 +145,8 @@ enum class HandleMode { UNDECIDED, SCALE, ROTATE }
 @Composable
 fun SignatureScreen(
     baseBitmaps: List<Bitmap>,
-    initialPageIndex: Int,
+    initialPageIndexFromProps: Int,
+    savedSignatures: List<ImageBitmap>, // Lista de firmas ya guardadas
     onSignatureComplete: (Int, Bitmap) -> Unit,
     onCancel: () -> Unit
 ) {
@@ -178,6 +176,10 @@ fun SignatureScreen(
 
 
     val activity = LocalContext.current as? Activity
+    var activePageIndex by rememberSaveable { mutableStateOf(initialPageIndexFromProps) }
+
+    var isInitialPosSet by rememberSaveable(signatureBitmap) { mutableStateOf(false) }
+
     DisposableEffect(activity) {
         val originalOrientation = activity?.requestedOrientation
         onDispose {
@@ -197,6 +199,10 @@ fun SignatureScreen(
         if (mode == SignatureMode.PLACING && signatureBitmap == null && strokes.any { it.isNotEmpty() }) {
             signatureBitmap =
                 captureSignature(strokes, strokeColor, strokeWidth)
+            // --- NUEVO ---
+            // Forzamos el recentrado la primera vez que se crea un bitmap de firma
+            isInitialPosSet = false
+            // --- FIN NUEVO ---
         }
     }
 
@@ -228,17 +234,21 @@ fun SignatureScreen(
     } else { // PLACING mode
         PlacingContent(
             baseBitmaps = baseBitmaps,
-            initialPageIndex = initialPageIndex,
+            initialPageIndex = activePageIndex,
             signatureBitmap = signatureBitmap,
             signatureOffset = signatureOffset,
             signatureScale = signatureScale,
             signatureRotation = signatureRotation,       // <--- AÑADIR
             isSignatureActive = isSignatureActive,     // <--- AÑADIR
+            isInitialPosSet = isInitialPosSet, // Pasa el flag
+            savedSignatures = savedSignatures, // Pasa las firmas guardadas
+
             onRotationChange = { signatureRotation = it }, // <--- AÑADIR
             onIsSignatureActiveChange = { isSignatureActive = it }, // <--- AÑADIR
 
             onOffsetChange = { signatureOffset = it },
             onScaleChange = { signatureScale = it },
+            onInitialPosSet = { isInitialPosSet = true }, // Callback para actualizar el flag
             onCancel = onCancel,
             onDeleteSignature = {
                 // 1. Borra los datos de la firma actual
@@ -253,14 +263,24 @@ fun SignatureScreen(
                 mode = SignatureMode.DRAWING
             },
             onSignatureComplete = onSignatureComplete,
-            onRequestDrawing = {
+            onRequestDrawing = { currentPageIndex ->
                 mode = SignatureMode.DRAWING
                 parcelableStrokes = emptyList()
                 signatureBitmap = null
                 // 2. LA CLAVE: Resetea la posición y la escala
                 signatureOffset = Offset.Zero
+
+                activePageIndex = currentPageIndex
                 //   signatureScale = 1f // <-- Esto evita que se vuelva invisible
-            } // <-- nuevo
+            }, // <-- nuevo
+            onSavedSignatureSelected = { selectedBmp ->
+                signatureBitmap = selectedBmp     // Pone la firma seleccionada
+                signatureScale = 1f             // Resetea escala
+                signatureRotation = 0f          // Resetea rotación
+                signatureOffset = Offset.Zero     // Resetea offset
+                isInitialPosSet = false         // ¡Importante! Fuerza el recentrado
+                parcelableStrokes = emptyList() // No viene de trazos
+            }
         )
     }
 }
@@ -318,9 +338,7 @@ private fun DrawingContent(
         )
     }
 }
-// ------------------ PlacingContent (actualizado) ------------------
 
-// ------------------ PlacingContent (actualizado) ------------------
 @Composable
 private fun PlacingContent(
     baseBitmaps: List<Bitmap>,
@@ -328,192 +346,82 @@ private fun PlacingContent(
     signatureBitmap: ImageBitmap?,
     signatureOffset: Offset,
     signatureScale: Float,
-    signatureRotation: Float, // Asegúrate de que el padre pase este valor
-    isSignatureActive: Boolean, // Asegúrate de que el padre pase este valor
+    signatureRotation: Float,
+    isSignatureActive: Boolean,
+    // --- MODIFICADO ---
+    isInitialPosSet: Boolean, // Recibe el flag
+    savedSignatures: List<ImageBitmap>, // Recibe las firmas
+    // --- FIN MODIFICADO ---
     onOffsetChange: (Offset) -> Unit,
     onScaleChange: (Float) -> Unit,
-    onRotationChange: (Float) -> Unit, // Asegúrate de que el padre pase este callback
-    onIsSignatureActiveChange: (Boolean) -> Unit, // Asegúrate de que el padre pase este callback
+    onRotationChange: (Float) -> Unit,
+    onIsSignatureActiveChange: (Boolean) -> Unit,
+    // --- NUEVO ---
+    onInitialPosSet: () -> Unit, // Callback para notificar que se centró
+    // --- FIN NUEVO ---
     onCancel: () -> Unit,
     onDeleteSignature: () -> Unit,
     onSignatureComplete: (Int, Bitmap) -> Unit,
-    onRequestDrawing: () -> Unit
+    onRequestDrawing: (currentPageIndex: Int) -> Unit,
+    // --- NUEVO ---
+    onSavedSignatureSelected: (ImageBitmap) -> Unit // Recibe el callback
 ) {
+
+    // Al inicio de PlacingContent (antes de Box), añade:
+    var lastUserInteraction by remember { mutableStateOf(0L) }
+    val COOLDOWN_MS = 300L                // ignora correcciones durante 300 ms tras interacción
+    val OFFSET_SNAP_THRESHOLD = 6f        // sólo corregir si la diferencia es mayor a 6 px
+
+    // Animatable para hacer transiciones suaves (recordado para no recrearlo cada scroll)
+    val offsetAnim = remember { Animatable(Offset(0f, 0f), Offset.VectorConverter) }
+
     val lazyListState = rememberLazyListState(initialFirstVisibleItemIndex = initialPageIndex)
     val density = LocalDensity.current
 
-    var signaturePageIndex by rememberSaveable { mutableStateOf(initialPageIndex) }
+    // Cálculo de la página visible actualmente
+    val currentPageIndex by remember {
+        derivedStateOf {
+            val layoutInfo = lazyListState.layoutInfo
+            val visibleItems = layoutInfo.visibleItemsInfo
+            if (visibleItems.isEmpty()) {
+                // Si no hay nada, usa el índice inicial o el de la firma
+                initialPageIndex
+            } else {
+                // Calcula el centro del viewport
+                val viewportCenterY = layoutInfo.viewportStartOffset + layoutInfo.viewportSize.height / 2
+
+                // Encuentra el item (página) cuyo centro está más cerca del centro del viewport
+                visibleItems.minByOrNull {
+                    val itemCenterY = it.offset + it.size / 2
+                    abs(itemCenterY - viewportCenterY)
+                }?.index ?: initialPageIndex // Fallback
+            }
+        }
+    }
+
+    // --- FUENTE DE LA VERDAD para la posición LÓGICA ---
     var signatureRelative by rememberSaveable(stateSaver = OffsetSaver) { mutableStateOf(Offset(0.5f, 0.5f)) }
-    var signatureScreenOffset by rememberSaveable(stateSaver = OffsetSaver) { mutableStateOf(signatureOffset) }
-    var signatureRotation by rememberSaveable { mutableFloatStateOf(0f) }
-
-    //var isSignatureActive by rememberSaveable { mutableStateOf(false) }
-    var isInitialPosSet by remember { mutableStateOf(false) }
     var finalPageIndex by rememberSaveable { mutableStateOf(initialPageIndex) }
-    var containerIntSize by remember { mutableStateOf(IntSize(0, 0)) }
+    // ---
 
-    Box(
+    // Flag para la configuración INICIAL
+   // var isInitialPosSet by rememberSaveable(signatureBitmap) { mutableStateOf(false) }
+    var containerIntSize by remember { mutableStateOf(IntSize(0, 0)) }
+    var showSubmenu by rememberSaveable { mutableStateOf(false) }
+
+    // --- El `Box` raíz se convierte en `Column` ---
+    Box(modifier = Modifier.fillMaxSize()) {
+    Column(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xFF212121))
-            .onGloballyPositioned {
-                containerIntSize = it.size
-            }
+        // El `onGloballyPositioned` se moverá al Box del contenido
     ) {
-        fun computeImageLayoutForPage(base: Bitmap): Pair<Float, Float> {
-            val pagePaddingPx = with(density) { 16.dp.toPx() }
-            val viewWidth = (containerIntSize.width - (pagePaddingPx * 2)).coerceAtLeast(1f)
-            val viewHeight = (containerIntSize.height - (pagePaddingPx * 2)).coerceAtLeast(1f)
-            val bitmapAspectRatio = base.width.toFloat() / base.height.toFloat()
-            val viewAspectRatio = viewWidth / viewHeight
-            return if (bitmapAspectRatio > viewAspectRatio) {
-                Pair(viewWidth, viewWidth / bitmapAspectRatio)
-            } else {
-                Pair(viewHeight * bitmapAspectRatio, viewHeight)
-            }
-        }
 
-        fun computeAbsoluteOffsetFromRelative(pageIndex: Int, relative: Offset, signatureBmp: ImageBitmap?, sigScale: Float): Offset? {
-            val base = baseBitmaps.getOrNull(pageIndex) ?: return null
-            if (containerIntSize.width == 0 || containerIntSize.height == 0 || signatureBmp == null) return null
-            val (scaledW, scaledH) = computeImageLayoutForPage(base)
-            val imageLeft = (containerIntSize.width - scaledW) / 2f
-            val visibleItem = lazyListState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == pageIndex }
-            val imageTop = (visibleItem?.offset ?: 0) + (containerIntSize.height - scaledH) / 2f
-            val centerX = imageLeft + relative.x * scaledW
-            val centerY = imageTop + relative.y * scaledH
-            val sigDrawW = signatureBmp.width * sigScale
-            val sigDrawH = signatureBmp.height * sigScale
-            return Offset(centerX - sigDrawW / 2f, centerY - sigDrawH / 2f)
-        }
-
-        // Inicializar posición de la firma solo una vez (no se re-ejecuta en cada scroll)
-        LaunchedEffect(signatureBitmap, containerIntSize) {
-            if (isInitialPosSet || signatureBitmap == null || containerIntSize.width == 0) return@LaunchedEffect
-            if (lazyListState.layoutInfo.visibleItemsInfo.isEmpty()) return@LaunchedEffect
-
-            val initialScale = (containerIntSize.width * 0.60f) / signatureBitmap.width
-            val initialOffset = computeAbsoluteOffsetFromRelative(
-                initialPageIndex,
-                Offset(0.5f, 0.5f),
-                signatureBitmap,
-                initialScale
-            )
-
-            initialOffset?.let {
-                onOffsetChange(it)    // fija signatureScreenOffset en el padre
-                onScaleChange(initialScale)
-                isInitialPosSet = true
-            }
-        }
-
-        // Documento (scrollable)
-        LazyColumn(
-            state = lazyListState,
-            modifier = Modifier.fillMaxSize(),
-            userScrollEnabled = !isSignatureActive
-        ) {
-            items(count = baseBitmaps.size, key = { index -> index }) { index ->
-                val pageBitmap = baseBitmaps[index]
-                Box(
-                    modifier = Modifier
-                        .fillParentMaxSize()
-                        .padding(3.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Image(
-                        bitmap = pageBitmap.asImageBitmap(),
-                        contentDescription = "Documento página ${index + 1}",
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .shadow(4.dp, RoundedCornerShape(2.dp))
-                            .background(Color.White, RoundedCornerShape(2.dp)),
-                        contentScale = ContentScale.Fit
-                    )
-                }
-            }
-        }
-
-        // Overlay para detectar taps fuera de la firma mientras está activa.
-        // Está entre el LazyColumn y el DraggableSignature (no estorba a la firma porque la firma está encima).
-        if (isSignatureActive) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .pointerInput(Unit) { // Solo necesita ejecutarse una vez
-                        detectTapGestures {
-                            // Si el tap llega aquí, es porque la firma
-                            // (que está encima) no lo consumió.
-                            // Por lo tanto, es "fuera".
-                            Log.e(TAG, "Clic detectado FUERA de la firma (en overlay). Desactivando.")
-                            onIsSignatureActiveChange(false)
-                        }
-                    }
-            )
-        }
-
-        // Firma como overlay (encima de todo)
-        signatureBitmap?.let { sigBmp ->
-            if (isInitialPosSet) {
-                DraggableSignature(
-                   // modifier = Modifier.fillMaxSize(),
-                    sigBmp = sigBmp,
-                    signatureOffset = signatureScreenOffset,
-                    signatureScale = signatureScale,
-                    signatureRotation = signatureRotation,
-                    isSignatureActive = isSignatureActive, // <-- Ahora usa el PARÁMETRO
-                    onIsSignatureActiveChange = onIsSignatureActiveChange, // <-- Ahora usa el PARÁMETRO
-                    onDeleteSignature = onDeleteSignature,
-                    onTransformChange = { newOffset, newScale, newRotation ->
-                        // actualizamos la posición en pantalla y escala/rot en el padre
-                        signatureScreenOffset = newOffset
-                        onScaleChange(newScale)
-                        signatureRotation = newRotation
-                        onOffsetChange(newOffset)
-                    },
-                    onDragEnd = { finalLocalOffset ->
-                        // 1) Dejamos la firma donde el usuario la soltó (posición pantalla)
-                        signatureScreenOffset = finalLocalOffset
-                        onOffsetChange(finalLocalOffset) // mantener padre sincronizado
-
-                        // 2) Calculamos la página relativa y la posición dentro de la página para persistencia
-                        val sigDrawW = sigBmp.width * signatureScale
-                        val sigDrawH = sigBmp.height * signatureScale
-                        val centerX = finalLocalOffset.x + sigDrawW / 2f
-                        val centerY = finalLocalOffset.y + sigDrawH / 2f
-
-                        val visible = lazyListState.layoutInfo.visibleItemsInfo
-                        if (visible.isNotEmpty()) {
-                            val target = visible.minByOrNull { item ->
-                                val itemCenterY = item.offset + item.size / 2
-                                kotlin.math.abs(itemCenterY - centerY)
-                            } ?: visible.first()
-
-                            val pageIndex = target.index
-                            val base = baseBitmaps.getOrNull(pageIndex)
-                            if (base != null) {
-                                val (scaledW, scaledH) = computeImageLayoutForPage(base)
-                                val imageLeft = (containerIntSize.width - scaledW) / 2f
-                                val imageTop = target.offset + (containerIntSize.height - scaledH) / 2f
-
-                                val relX = (centerX - imageLeft) / scaledW
-                                val relY = (centerY - imageTop) / scaledH
-
-                                signaturePageIndex = pageIndex
-                                signatureRelative = Offset(relX.coerceIn(0f, 1f), relY.coerceIn(0f, 1f))
-                                finalPageIndex = signaturePageIndex
-                            }
-                        }
-                    }
-                )
-            }
-        }
-
-        // Controles superior & inferior (igual que antes)
+        // --- La barra superior (Row) se mueve al inicio de la Column ---
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .align(Alignment.TopCenter)
                 .padding(16.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
@@ -523,20 +431,236 @@ private fun PlacingContent(
                     Icons.Default.Close,
                     "Cancelar",
                     tint = Color.White,
-                    modifier = Modifier.background(Color.Black.copy(alpha = 0.3f), CircleShape).padding(4.dp)
+                    modifier = Modifier
+                        .background(Color.Black.copy(alpha = 0.3f), CircleShape)
+                        .padding(4.dp)
                 )
             }
             Text(
-                "Página ${finalPageIndex + 1} de ${baseBitmaps.size}",
+                "Página ${currentPageIndex + 1} de ${baseBitmaps.size}",
                 color = Color.White,
-                modifier = Modifier.background(Color.Black.copy(alpha = 0.3f), RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 4.dp)
+                modifier = Modifier
+                    .background(Color.Black.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
             )
         }
 
-        Surface(
+        // --- Se crea un `Box` para el contenido que SÍ se recorta ---
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .align(Alignment.BottomCenter),
+                .weight(1f) // Ocupa el espacio restante
+                .clipToBounds() // <-- ¡LA SOLUCIÓN! Recorta todo lo que se salga de este Box
+                .onGloballyPositioned { // <-- El listener de tamaño se mueve aquí
+                    containerIntSize = it.size
+                }
+        ) {
+            // --- El resto (LazyColumn, Overlay, Firma) va DENTRO de este Box ---
+
+            fun computeImageLayoutForPage(base: Bitmap): Pair<Float, Float> {
+                val pagePaddingPx = with(density) { 16.dp.toPx() }
+                val viewWidth = (containerIntSize.width - (pagePaddingPx * 2)).coerceAtLeast(1f)
+                val viewHeight = (containerIntSize.height - (pagePaddingPx * 2)).coerceAtLeast(1f)
+                val bitmapAspectRatio = base.width.toFloat() / base.height.toFloat()
+                val viewAspectRatio = viewWidth / viewHeight
+                return if (bitmapAspectRatio > viewAspectRatio) {
+                    Pair(viewWidth, viewWidth / bitmapAspectRatio)
+                } else {
+                    Pair(viewHeight * bitmapAspectRatio, viewHeight)
+                }
+            }
+
+
+            fun computeAbsoluteOffsetFromRelative(
+                pageIndex: Int,
+                relative: Offset,
+                signatureBmp: ImageBitmap?,
+                sigScale: Float
+            ): Offset? {
+                val base = baseBitmaps.getOrNull(pageIndex) ?: return null
+                if (containerIntSize.width == 0 || containerIntSize.height == 0 || signatureBmp == null) return null
+
+                // 1. Encuentra la página...
+                val visibleItem =
+                    lazyListState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == pageIndex }
+                        ?: return null
+
+                // 2. Llama a la función que ya existe
+                val (scaledW, scaledH) = computeImageLayoutForPage(base)
+
+                // ... (resto de la función)
+                val imageLeft = (containerIntSize.width - scaledW) / 2f
+                val imageTop = (visibleItem.offset) + (containerIntSize.height - scaledH) / 2f
+                val centerX = imageLeft + relative.x * scaledW
+                val centerY = imageTop + relative.y * scaledH
+                val sigDrawW = signatureBmp.width * sigScale
+                val sigDrawH = signatureBmp.height * sigScale
+                return Offset(centerX - sigDrawW / 2f, centerY - sigDrawH / 2f)
+            }
+
+
+            // LaunchedEffect para la configuración INICIAL
+            LaunchedEffect(signatureBitmap, containerIntSize) {
+                if (isInitialPosSet || signatureBitmap == null || containerIntSize.width == 0) return@LaunchedEffect
+
+                snapshotFlow { lazyListState.layoutInfo.visibleItemsInfo.isNotEmpty() }
+                    .first { it }
+
+                val initialScale = (containerIntSize.width * 0.60f) / signatureBitmap.width
+                val initialOffset = computeAbsoluteOffsetFromRelative(
+                    initialPageIndex,
+                    Offset(0.5f, 0.5f),
+                    signatureBitmap,
+                    initialScale
+                )
+
+                initialOffset?.let {
+                    signatureRelative = Offset(0.5f, 0.5f)
+                    finalPageIndex = initialPageIndex
+
+                    onOffsetChange(it)
+                    onScaleChange(initialScale)
+                    // --- MODIFICADO ---
+                    onInitialPosSet() // Notifica al padre que ya se centró
+                    // --- FIN MODIFICADO ---
+                }
+            }
+
+
+            // --- EFFECT CLAVE QUE ARREGLA EL SCROLL ---
+            LaunchedEffect(
+                lazyListState.firstVisibleItemScrollOffset,
+                lazyListState.firstVisibleItemIndex,
+                isSignatureActive // No actualices si el usuario está arrastrando
+            ) {
+                if (isSignatureActive || !isInitialPosSet || signatureBitmap == null) return@LaunchedEffect
+
+                val currentTargetOffset = computeAbsoluteOffsetFromRelative(
+                    finalPageIndex,
+                    signatureRelative,
+                    signatureBitmap,
+                    signatureScale
+                )
+
+                if (currentTargetOffset != null && (currentTargetOffset - signatureOffset).getDistance() > 1.0f) {
+                    onOffsetChange(currentTargetOffset)
+                }
+            }
+            // --- FIN DEL EFFECT DEL SCROLL ---
+
+
+            // Documento (scrollable)
+            LazyColumn(
+                state = lazyListState,
+                modifier = Modifier.fillMaxSize(), // Llena el Box contenedor
+                userScrollEnabled = !isSignatureActive
+            ) {
+                items(count = baseBitmaps.size, key = { index -> index }) { index ->
+                    val pageBitmap = baseBitmaps[index]
+                    Box(
+                        modifier = Modifier
+                            .fillParentMaxSize()
+                            .padding(3.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Image(
+                            bitmap = pageBitmap.asImageBitmap(),
+                            contentDescription = "Documento página ${index + 1}",
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .shadow(4.dp, RoundedCornerShape(2.dp))
+                                .background(
+                                    Color(0xFF333333),
+                                    RoundedCornerShape(2.dp)
+                                ), // <-- Fondo gris
+                            contentScale = ContentScale.Fit
+                        )
+                    }
+                }
+            }
+
+            // Overlay para detectar taps fuera de la firma...
+            if (isSignatureActive) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(Unit) {
+                            detectTapGestures {
+                                Log.e(
+                                    TAG,
+                                    "Clic detectado FUERA de la firma (en overlay). Desactivando."
+                                )
+                                onIsSignatureActiveChange(false)
+                            }
+                        }
+                )
+            }
+
+
+            // --- Firma con renderizado condicional ---
+            val currentAbsoluteOffset = if (isInitialPosSet && signatureBitmap != null) {
+                computeAbsoluteOffsetFromRelative(
+                    finalPageIndex, signatureRelative, signatureBitmap, signatureScale
+                )
+            } else {
+                null
+            }
+
+            // Dibuja la firma SÓLO SI su página está visible
+            if (currentAbsoluteOffset != null && signatureBitmap != null) {
+                DraggableSignature(
+                    sigBmp = signatureBitmap,
+                    signatureOffset = signatureOffset,
+                    signatureScale = signatureScale,
+                    signatureRotation = signatureRotation,
+                    isSignatureActive = isSignatureActive,
+                    onIsSignatureActiveChange = onIsSignatureActiveChange,
+                    onDeleteSignature = onDeleteSignature,
+                    onTransformChange = { newOffset, newScale, newRotation ->
+                        onOffsetChange(newOffset)
+                        onScaleChange(newScale)
+                        onRotationChange(newRotation)
+
+                        val sigDrawW = signatureBitmap.width * newScale
+                        val sigDrawH = signatureBitmap.height * newScale
+                        val centerX = newOffset.x + sigDrawW / 2f
+                        val centerY = newOffset.y + sigDrawH / 2f
+
+                        val visible = lazyListState.layoutInfo.visibleItemsInfo
+                        if (visible.isNotEmpty()) {
+                            val target = visible.minByOrNull { item ->
+                                val itemCenterY = item.offset + item.size / 2
+                                abs(itemCenterY - centerY)
+                            } ?: visible.first()
+
+                            val pageIndex = target.index
+                            val base = baseBitmaps.getOrNull(pageIndex)
+                            if (base != null) {
+                                val (scaledW, scaledH) = computeImageLayoutForPage(base)
+                                val imageLeft = (containerIntSize.width - scaledW) / 2f
+                                val imageTop =
+                                    target.offset + (containerIntSize.height - scaledH) / 2f
+                                val relX = (centerX - imageLeft) / scaledW
+                                val relY = (centerY - imageTop) / scaledH
+
+                                signatureRelative =
+                                    Offset(relX.coerceIn(0f, 1f), relY.coerceIn(0f, 1f))
+                                finalPageIndex = pageIndex
+                            }
+                        }
+                    },
+                    onDragEnd = { finalLocalOffset ->
+                        onOffsetChange(finalLocalOffset)
+                    }
+                )
+            }
+        } // --- FIN DEL BOX DE CONTENIDO ---
+    }
+
+        // --- La barra inferior (Surface) se mueve al final de la Column ---
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(),
             color = Color(0xFF2C2C2E),
             shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
         ) {
@@ -553,7 +677,8 @@ private fun PlacingContent(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier
                             .width(64.dp)
-                            .clickable { onRequestDrawing() }
+                           // .clickable { onRequestDrawing(currentPageIndex) } // <-- Pasa la página actual
+                            .clickable { showSubmenu = true }
                             .padding(vertical = 4.dp)
                     ) {
                         Icon(
@@ -591,9 +716,10 @@ private fun PlacingContent(
                                 val finalBitmap = placeSignatureOnBitmap(
                                     base = baseBitmaps[finalPageIndex],
                                     signature = signatureBitmap,
-                                    signatureOffset = signatureScreenOffset,
+                                    signatureOffset = signatureOffset,
                                     signatureScale = signatureScale,
-                                    containerSize = containerIntSize
+                                    signatureRotation = signatureRotation,
+                                    containerSize = containerIntSize // Esto ahora es el tamaño del Box central
                                 )
                                 onSignatureComplete(finalPageIndex, finalBitmap)
                             }
@@ -612,10 +738,26 @@ private fun PlacingContent(
                     }
                 }
             }
+            if (showSubmenu) {
+                SignatureSubmenu(
+                    savedSignatures = savedSignatures,
+                    onCreateNew = {
+                        showSubmenu = false
+                        onRequestDrawing(currentPageIndex) // Llama al callback para dibujar
+                    },
+                    onSignatureSelected = { selectedBmp ->
+                        showSubmenu = false
+                        onSavedSignatureSelected(selectedBmp) // Llama al callback de selección
+                    },
+                    onDismiss = {
+                        showSubmenu = false // Cierra el submenú
+                    }
+                )
+            }
         }
-    }
+    } // --- FIN DEL COLUMN RAÍZ ---
 }
-// Asegúrate de tener este helper en el archivo
+
 
 @Composable
 fun DraggableSignature(
@@ -633,7 +775,7 @@ fun DraggableSignature(
     val density = LocalDensity.current
     val coroutineScope = rememberCoroutineScope()
 
-    // Sensibilidades / límites / snap config
+    // Sensibilidades / límites / snap config (sin cambios)
     val SENSITIVITY_SCALE = 0.0035f
     val SENSITIVITY_ROT = 0.0045f
     val MIN_SCALE = 0.1f
@@ -698,23 +840,20 @@ fun DraggableSignature(
                 .size(width = displayWidthDp, height = displayHeightDp)
                 .graphicsLayer {
                     rotationZ = Math.toDegrees(localRotation.toDouble()).toFloat()
-                    transformOrigin = TransformOrigin(0.5f, 0.5f) // <-- pivote en el centro
-                    // NO scaleX/scaleY aquí (el .size ya incorpora scale)
+                    transformOrigin = TransformOrigin(0.5f, 0.5f) // pivote en el centro
                 }
-                .background(Color.Red.copy(alpha = 0.35f))
-
-
-                // Tap para activar la firma (consume la pulsación)
-                // ... (después de .background(...))
-                .pointerInput(Unit) { // <-- Clave Unit
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {
+                        if (!isSignatureActive) onIsSignatureActiveChange(true)
+                    }
+                )
+                // ---------- Aquí está la corrección principal ----------
+                .pointerInput(Unit) {
                     detectDragGestures(
                         onDragStart = { start ->
-                            // 1. Activa la firma si no lo está
-                            if (!isSignatureActive) {
-                                onIsSignatureActiveChange(true)
-                            }
-
-                            // 2. Lógica de drag normal del padre
+                            if (!isSignatureActive) onIsSignatureActiveChange(true)
                             isInteracting = true
                             touchOffsetInElement = start
                         },
@@ -729,17 +868,21 @@ fun DraggableSignature(
                             onDragEnd(localOffset)
                         },
                         onDrag = { change, dragAmount ->
-                            // 3. ¡LA CLAVE! Si el hijo consumió (dragAmount=0), el padre CEDE.
                             if (dragAmount == Offset.Zero) return@detectDragGestures
-
-                            // 4. Si el hijo no consumió, el padre se mueve
                             change.consumePositionChange()
-                            localOffset += dragAmount
+
+                            // >>> CORRECCIÓN: convertir el delta desde coordenadas LOCALES (rotadas)
+                            // a coordenadas GLOBALES del contenedor antes de aplicarlo.
+                            // Si `dragAmount` viene en el sistema rotado del elemento, rotamos
+                            // ese vector por el ángulo localRotation para obtener el delta
+                            // en coordenadas del padre.
+                            val globalDelta = dragAmount.rotateBy(localRotation)
+
+                            localOffset += globalDelta
                             onTransformChange(localOffset, localScale, localRotation)
                         }
                     )
                 }
-
         ) {
             // Imagen que ocupa todo el container (ya escalada por .size)
             Image(
@@ -749,7 +892,6 @@ fun DraggableSignature(
                 contentScale = ContentScale.Fit
             )
 
-            // Borde verde que ahora coincide exactamente con la imagen visible
             if (isSignatureActive) {
                 Box(
                     modifier = Modifier
@@ -761,21 +903,13 @@ fun DraggableSignature(
 
             // Botón eliminar (top-start) y handle (bottom-end)
             if (isSignatureActive) {
-                // val iconScale = 1f / localScale // <-- YA NO SE USA
-
                 IconButton(
                     onClick = onDeleteSignature,
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .graphicsLayer {
-                            // --- CORRECCIÓN 1: Iconos ---
-                            // scaleX = iconScale // <-- ELIMINADO
-                            // scaleY = iconScale // <-- ELIMINADO
-                            // La traslación SÍ debe escalarse para que el icono
-                            // quede "fuera" del borde proporcionalmente
-                            val iconTranslate = 1f / localScale
-                            translationX = with(density) { -14.dp.toPx() } * iconTranslate
-                            translationY = with(density) { -14.dp.toPx() } * iconTranslate
+                            translationX = with(density) { -14.dp.toPx() }
+                            translationY = with(density) { -14.dp.toPx() }
                         }
                         .background(Color(0xFF2C2C2E), CircleShape)
                         .size(28.dp)
@@ -783,18 +917,12 @@ fun DraggableSignature(
                     Icon(Icons.Default.Close, "Eliminar", tint = Color.White)
                 }
 
-                // Handle bottom-end: escala/rotación mezclada
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .graphicsLayer {
-                            // --- CORRECCIÓN 1: Iconos ---
-                            // val inv = iconScale // <-- ELIMINADO
-                            // scaleX = inv; scaleY = inv // <-- ELIMINADO
-                            // La traslación SÍ debe escalarse
-                            val iconTranslate = 1f / localScale
-                            translationX = with(density) { 8.dp.toPx() } * iconTranslate
-                            translationY = with(density) { 8.dp.toPx() } * iconTranslate
+                            translationX = with(density) { 8.dp.toPx() }
+                            translationY = with(density) { 8.dp.toPx() }
                         }
                         .size(36.dp)
                         .clip(CircleShape)
@@ -802,9 +930,6 @@ fun DraggableSignature(
                         .pointerInput(isSignatureActive) {
                             detectDragGestures(
                                 onDragStart = {
-                                    if (!isSignatureActive) {
-                                        onIsSignatureActiveChange(true)
-                                    }
                                     isHandleDragging = true
                                     isInteracting = true
                                     accumulatedDrag = Offset.Zero
@@ -813,7 +938,6 @@ fun DraggableSignature(
                                     isHandleDragging = false
                                     isInteracting = false
                                     accumulatedDrag = Offset.Zero
-                                    // Snap animado
                                     coroutineScope.launch {
                                         scaleAnim.snapTo(localScale)
                                         rotationAnim.snapTo(localRotation)
@@ -821,13 +945,12 @@ fun DraggableSignature(
                                         val targetRotDeg = snapToStep(Math.toDegrees(localRotation.toDouble()).toFloat(), SNAP_ROT_DEG)
                                         val targetRot = Math.toRadians(targetRotDeg.toDouble()).toFloat()
 
-                                        // --- CORRECCIÓN 3: onDragEnd ---
-                                        // Centro global ANTES del snap (estado actual)
-                                        val preSnapW = bmpWidthPx * scaleAnim.value // (localScale antes del snap)
+                                        // Mantener el centro global constante (sigue funcionando
+                                        // si la rotación es alrededor del centro).
+                                        val preSnapW = bmpWidthPx * scaleAnim.value
                                         val preSnapH = bmpHeightPx * scaleAnim.value
                                         val preSnapCenterLocal = Offset(preSnapW / 2f, preSnapH / 2f)
-                                        // El centro global es el offset + el centro local (sin rotación)
-                                        val curCenterGlobal = localOffset + preSnapCenterLocal // <-- SIN .rotateRad()
+                                        val curCenterGlobal = localOffset + preSnapCenterLocal
 
                                         val j1 = launch { scaleAnim.animateTo(targetScale, animationSpec = snapAnimSpec) }
                                         val j2 = launch { rotationAnim.animateTo(targetRot, animationSpec = snapAnimSpec) }
@@ -836,13 +959,11 @@ fun DraggableSignature(
                                         localScale = scaleAnim.value
                                         localRotation = rotationAnim.value
 
-                                        // Centro local DESPUÉS del snap (estado final)
-                                        val postSnapW = bmpWidthPx * localScale // (localScale después del snap)
+                                        val postSnapW = bmpWidthPx * localScale
                                         val postSnapH = bmpHeightPx * localScale
                                         val postSnapCenterLocal = Offset(postSnapW / 2f, postSnapH / 2f)
 
-                                        // El nuevo offset es el centro que mantuvimos fijo, menos el nuevo centro local
-                                        val newOffset = curCenterGlobal - postSnapCenterLocal // <-- SIN .rotateRad()
+                                        val newOffset = curCenterGlobal - postSnapCenterLocal
 
                                         localOffset = newOffset
                                         onTransformChange(localOffset, localScale, localRotation)
@@ -856,9 +977,9 @@ fun DraggableSignature(
                                     coroutineScope.launch { onDragEnd(localOffset) }
                                 },
                                 onDrag = { change, dragAmount ->
-                                    // 2. ¡LA CLAVE! El hijo CONSUME el gesto
                                     change.consumePositionChange()
                                     accumulatedDrag += dragAmount
+
                                     val ax = abs(accumulatedDrag.x)
                                     val ay = abs(accumulatedDrag.y)
                                     if (ax + ay == 0f) return@detectDragGestures
@@ -874,23 +995,16 @@ fun DraggableSignature(
                                     val newScale = (localScale * (1f + dx * SENSITIVITY_SCALE * mixScale)).coerceIn(MIN_SCALE, MAX_SCALE)
                                     val newRotation = localRotation + dy * SENSITIVITY_ROT * mixRot
 
-                                    // --- CORRECCIÓN 2: onDrag (Handle) ---
-                                    // Compensación SÓLO por escala, ya que origin(0.5, 0.5) maneja la rotación
-
-                                    // 1. Centro actual (el punto que queremos mantener fijo)
+                                    // Compensación sólo por escala (mantenemos centro fijo)
                                     val displayW = bmpWidthPx * localScale
                                     val displayH = bmpHeightPx * localScale
                                     val centerLocal = Offset(displayW / 2f, displayH / 2f)
-                                    val curCenterGlobal = localOffset + centerLocal // <-- SIN .rotateRad()
+                                    val curCenterGlobal = localOffset + centerLocal
 
-                                    // 2. Nuevo centro (basado en la nueva escala)
                                     val newDisplayW = bmpWidthPx * newScale
                                     val newDisplayH = bmpHeightPx * newScale
                                     val newCenterLocal = Offset(newDisplayW / 2f, newDisplayH / 2f)
-
-                                    // 3. Nuevo offset es la diferencia
-                                    val newOffset = curCenterGlobal - newCenterLocal // <-- SIN .rotateRad()
-
+                                    val newOffset = curCenterGlobal - newCenterLocal
 
                                     // Aplicar cambios en vivo
                                     localScale = newScale
@@ -910,6 +1024,7 @@ fun DraggableSignature(
     }
 }
 
+
 /**
  * Redondea un valor al múltiplo más cercano de 'step'.
  */
@@ -919,6 +1034,15 @@ private fun snapToStep(value: Float, step: Float): Float {
 }
 
 
+
+/**
+ * Rota un Offset por un ángulo en radianes.
+ */
+private fun Offset.rotateRad(rad: Float): Offset {
+    val c = kotlin.math.cos(rad)
+    val s = kotlin.math.sin(rad)
+    return Offset(x * c - y * s, x * s + y * c)
+}
 
 
 
@@ -951,14 +1075,10 @@ private operator fun Offset.minus(other: Offset) = Offset(x - other.x, y - other
 
 
 
-/** Rota un Offset en grados (positivo = sentido antihorario). */
-fun Offset.rotateBy(degrees: Float): Offset {
-    val rad = Math.toRadians(degrees.toDouble())
-    val c = cos(rad)
-    val s = sin(rad)
-    val newX = (x * c - y * s).toFloat()
-    val newY = (x * s + y * c).toFloat()
-    return Offset(newX, newY)
+private fun Offset.rotateBy(angleRad: Float): Offset {
+    val c = kotlin.math.cos(angleRad)
+    val s = kotlin.math.sin(angleRad)
+    return Offset(this.x * c - this.y * s, this.x * s + this.y * c)
 }
 
 
@@ -1223,6 +1343,7 @@ private fun placeSignatureOnBitmap(
     signature: ImageBitmap?,
     signatureOffset: Offset,
     signatureScale: Float,
+    signatureRotation: Float,
     containerSize: IntSize
 ): Bitmap {
     if (signature == null) return base
@@ -1264,8 +1385,20 @@ private fun placeSignatureOnBitmap(
     val canvas = android.graphics.Canvas(resultBitmap)
     val paint = android.graphics.Paint().apply { isAntiAlias = true }
 
+    val rotationInDegrees = Math.toDegrees(signatureRotation.toDouble()).toFloat()
+
+    // 2. Calcula el centro de la firma (el pivote) DESPUÉS de escalarla
+    val pivotX = (signature.width / 2f) * finalSignatureScale
+    val pivotY = (signature.height / 2f) * finalSignatureScale
+
     val matrix = android.graphics.Matrix().apply {
+        // 1. Escala la firma (desde el 0,0)
         postScale(finalSignatureScale, finalSignatureScale)
+
+        // 2. ROTA la firma escalada alrededor de su nuevo centro (pivote)
+        postRotate(rotationInDegrees, pivotX, pivotY)
+
+        // 3. Mueve la firma (ya escalada y rotada) a su posición final (top-left)
         postTranslate(finalX, finalY)
     }
 
@@ -1290,3 +1423,83 @@ private fun captureBitmap(
     )
     return imageBitmap
 }
+
+
+// --- NUEVO ---
+/**
+ * Un submenú que se muestra desde la parte inferior, ofreciendo
+ * crear una nueva firma o seleccionar una existente.
+ */
+@Composable
+private fun SignatureSubmenu(
+    savedSignatures: List<ImageBitmap>,
+    onCreateNew: () -> Unit,
+    onSignatureSelected: (ImageBitmap) -> Unit,
+    onDismiss: () -> Unit
+) {
+    // Box para el overlay oscuro (clickable para descartar)
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.5f))
+            // Detecta taps FUERA del menú para cerrarlo
+            .pointerInput(Unit) { detectTapGestures { onDismiss() } },
+        contentAlignment = Alignment.BottomCenter
+    ) {
+        // Columna para el contenido real del menú
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
+                .background(Color(0xFF2C2C2E))
+                // Consume los clics aquí para que el Box de overlay no los reciba
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {}
+                )
+        ) {
+            // 1. Botón "Crear nueva firma"
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onCreateNew() }
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.Add, "Crear nueva", tint = Color.White)
+                Spacer(Modifier.width(16.dp))
+                Text("Crear nueva firma", color = Color.White, fontSize = 16.sp)
+            }
+
+            // 2. Lista de firmas guardadas (si existen)
+            if (savedSignatures.isNotEmpty()) {
+                Divider(color = Color(0xFF1B1B1B), thickness = 1.dp)
+
+                LazyRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 12.dp),
+                    contentPadding = PaddingValues(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(savedSignatures) { sigBmp ->
+                        Image(
+                            bitmap = sigBmp,
+                            contentDescription = "Firma guardada",
+                            modifier = Modifier
+                                .size(120.dp, 60.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(Color(0xFF424242)) // Fondo para las firmas
+                                .border(1.dp, Color.Gray, RoundedCornerShape(4.dp))
+                                .clickable { onSignatureSelected(sigBmp) }
+                                .padding(4.dp), // Padding interno para que la firma no toque el borde
+                            contentScale = ContentScale.Fit // Asegura que la firma se vea completa
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+// --- FIN NUEVO ---
