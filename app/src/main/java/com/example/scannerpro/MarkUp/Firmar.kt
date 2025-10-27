@@ -119,6 +119,7 @@ import androidx.compose.foundation.gestures.detectTapGestures // --- NUEVO ---
 import androidx.compose.ui.unit.Dp // <-- Añade esta importación si falta
 import androidx.compose.foundation.layout.widthIn // <-- Añade esta importación
 import androidx.compose.material.Surface // <-- Asegúrate de usar esta (material 1)
+import androidx.compose.runtime.key
 import java.util.UUID
 
 
@@ -159,6 +160,8 @@ private data class SignatureInstance(
     var rotation: Float // En radianes
 )
 
+// --- REEMPLAZA TU SignatureScreen CON ESTA VERSIÓN LIMPIA ---
+
 @Composable
 fun SignatureScreen(
     baseBitmaps: List<Bitmap>,
@@ -169,37 +172,30 @@ fun SignatureScreen(
     onNewSignatureCreated: (Bitmap) -> Unit
 ) {
 
-    var signatureRotation by rememberSaveable { mutableFloatStateOf(0f) } // <-- Ya tenías este
-
-    // --- AÑADE ESTA LÍNEA ---
-    var isSignatureActive by rememberSaveable { mutableStateOf(false) }
-
+    // --- ESTADO NUEVO (MULTI-FIRMA) ---
     var signatureInstances by remember { mutableStateOf<List<SignatureInstance>>(emptyList()) }
     var activeSignatureId by rememberSaveable { mutableStateOf<String?>(null) }
+    // --- FIN ESTADO NUEVO ---
 
+    // --- ESTADO COMPARTIDO (Dibujo y Posicionamiento) ---
     var mode by rememberSaveable { mutableStateOf(SignatureMode.PLACING) }
     var parcelableStrokes by rememberSaveable { mutableStateOf<List<ParcelableStroke>>(emptyList()) }
+    var activePageIndex by rememberSaveable { mutableStateOf(initialPageIndexFromProps) }
+    // --- FIN ESTADO COMPARTIDO ---
 
+    // --- ESTADO SOLO DE DIBUJO ---
     val strokes = remember(parcelableStrokes) {
         parcelableStrokes.map { stroke -> stroke.points.map { it.toOffset() } }
     }
-
     val onAddStroke: (List<Offset>) -> Unit = { newStroke ->
         parcelableStrokes = parcelableStrokes + ParcelableStroke(newStroke.map { it.toParcelable() })
     }
-
     var strokeColor by rememberSaveable(stateSaver = ColorSaver) { mutableStateOf(Color.Black) }
     var strokeWidth by rememberSaveable { mutableStateOf(5f) }
-    var signatureBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
-    var signatureOffset by rememberSaveable(stateSaver = OffsetSaver) { mutableStateOf(Offset.Zero) }
-    var signatureScale by rememberSaveable { mutableStateOf(1f) }
+    // --- FIN ESTADO SOLO DE DIBUJO ---
 
-
+    // --- EFECTOS (para la orientación de pantalla) ---
     val activity = LocalContext.current as? Activity
-    var activePageIndex by rememberSaveable { mutableStateOf(initialPageIndexFromProps) }
-
-    var isInitialPosSet by rememberSaveable(signatureBitmap) { mutableStateOf(false) }
-
     DisposableEffect(activity) {
         val originalOrientation = activity?.requestedOrientation
         onDispose {
@@ -215,16 +211,10 @@ fun SignatureScreen(
         }
     }
 
-    LaunchedEffect(mode, strokes, strokeColor, strokeWidth) {
-        if (mode == SignatureMode.PLACING && signatureBitmap == null && strokes.any { it.isNotEmpty() }) {
-            signatureBitmap =
-                captureSignature(strokes, strokeColor, strokeWidth)
-            // --- NUEVO ---
-            // Forzamos el recentrado la primera vez que se crea un bitmap de firma
-            isInitialPosSet = false
-            // --- FIN NUEVO ---
-        }
-    }
+    // --- SE ELIMINARON TODAS LAS VARIABLES "ZOMBIS" ---
+    // (Se fueron: signatureRotation, isSignatureActive, signatureBitmap,
+    // signatureOffset, signatureScale, isInitialPosSet y el LaunchedEffect viejo)
+    // --- FIN DE LA LIMPIEZA ---
 
     if (mode == SignatureMode.DRAWING) {
         DrawingContent(
@@ -245,7 +235,6 @@ fun SignatureScreen(
                 if (strokes.any { it.isNotEmpty() }) {
                     val newSigImageBitmap = captureSignature(strokes, strokeColor, strokeWidth)
 
-                    // --- LÓGICA DE AÑADIR NUEVA ---
                     // 1. Crea la nueva instancia
                     val newInstance = SignatureInstance(
                         bitmap = newSigImageBitmap,
@@ -270,16 +259,14 @@ fun SignatureScreen(
             baseBitmaps = baseBitmaps,
             initialPageIndex = activePageIndex,
 
-            // --- PASA EL NUEVO ESTADO ---
+            // Pasa el estado limpio
             instances = signatureInstances,
             activeInstanceId = activeSignatureId,
             savedSignatures = savedSignatures,
-            // --- FIN NUEVO ESTADO ---
 
             onCancel = onCancel,
-            onSignatureComplete = onSignatureComplete, // El guardado final se maneja dentro de PlacingContent
+            onSignatureComplete = onSignatureComplete,
 
-            // --- LAMBDAS DE MANEJO DE ESTADO ---
             onRequestDrawing = { currentPageIndex ->
                 mode = SignatureMode.DRAWING
                 parcelableStrokes = emptyList()
@@ -313,7 +300,6 @@ fun SignatureScreen(
             onDeactivate = {
                 activeSignatureId = null
             }
-            // --- FIN LAMBDAS ---
         )
     }
 }
@@ -617,41 +603,46 @@ private fun PlacingContent(
                     pageLayout?.let {
                         // Calcula el offset absoluto actual
                         val absoluteOffset = computeAbsoluteOffsetFromRelative(instance, it)
+                        key(instance.id) {
+                            DraggableSignature(
+                                //key = instance.id, // ¡Importante para el rendimiento!
+                                sigBmp = instance.bitmap,
+                                signatureOffset = absoluteOffset, // Se actualiza con el scroll
+                                signatureScale = instance.scale,
+                                signatureRotation = instance.rotation,
+                                isSignatureActive = (instance.id == activeInstanceId),
 
-                        DraggableSignature(
-                            //key = instance.id, // ¡Importante para el rendimiento!
-                            sigBmp = instance.bitmap,
-                            signatureOffset = absoluteOffset, // Se actualiza con el scroll
-                            signatureScale = instance.scale,
-                            signatureRotation = instance.rotation,
-                            isSignatureActive = (instance.id == activeInstanceId),
+                                onIsSignatureActiveChange = {
+                                    if (it) onInstanceActivate(instance.id) else onDeactivate()
+                                },
+                                onDeleteSignature = {
+                                    onInstanceDelete(instance.id)
+                                },
+                                onTransformChange = { newAbsOffset, newScale, newRotation ->
+                                    // Convierte el drag a estado lógico
+                                    val (newPageIndex, newRelativeOffset) =
+                                        convertAbsoluteToRelative(
+                                            newAbsOffset,
+                                            newScale,
+                                            instance.bitmap
+                                        )
 
-                            onIsSignatureActiveChange = {
-                                if (it) onInstanceActivate(instance.id) else onDeactivate()
-                            },
-                            onDeleteSignature = {
-                                onInstanceDelete(instance.id)
-                            },
-                            onTransformChange = { newAbsOffset, newScale, newRotation ->
-                                // Convierte el drag a estado lógico
-                                val (newPageIndex, newRelativeOffset) =
-                                    convertAbsoluteToRelative(newAbsOffset, newScale, instance.bitmap)
-
-                                // Envía el estado actualizado al padre
-                                onInstanceUpdate(
-                                    instance.copy(
-                                        pageIndex = newPageIndex,
-                                        relativeOffset = newRelativeOffset,
-                                        scale = newScale,
-                                        rotation = newRotation
+                                    // Envía el estado actualizado al padre
+                                    onInstanceUpdate(
+                                        instance.copy(
+                                            pageIndex = newPageIndex,
+                                            relativeOffset = newRelativeOffset,
+                                            scale = newScale,
+                                            rotation = newRotation
+                                        )
                                     )
-                                )
-                            },
-                            onDragEnd = { finalAbsOffset ->
-                                // La lógica ya está en onTransformChange
-                                // Opcional: podrías querer hacer un "snap" aquí
-                            }
-                        )
+                                },
+                                onDragEnd = { finalAbsOffset ->
+                                    // La lógica ya está en onTransformChange
+                                    // Opcional: podrías querer hacer un "snap" aquí
+                                }
+                            )
+                        }
                     }
                 }
                 // --- FIN RENDERIZADO DE FIRMAS ---
