@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory
 import android.util.Log
 import androidx.room.Dao
 import androidx.room.Database
+import androidx.room.Delete
 import androidx.room.Embedded
 import androidx.room.Entity
 import androidx.room.ForeignKey
@@ -121,6 +122,10 @@ interface DocumentDao {
 
     @Query("SELECT * FROM signatures ORDER BY createdAt DESC")
     suspend fun getAllSignatures(): List<Signature>
+
+    // Eliminar firma guardada ---
+    @Delete
+    suspend fun deleteSignature(signature: Signature)
 
 }
 
@@ -348,6 +353,35 @@ class DocumentRepository(private val context: Context, private val documentDao: 
                 null
             }
         }
+    }
+
+
+    suspend fun deleteSignature(indexToDelete: Int) {
+        // 1. Obtenemos la lista de *entidades* de la base de datos
+        //    (Es importante llamar al DAO aquí, no al getAllSignatures() de este repo)
+        val allSignatures = documentDao.getAllSignatures()
+
+        // 2. Encontramos la entidad específica usando el índice
+        val signatureToDelete = allSignatures.getOrNull(indexToDelete)
+
+        if (signatureToDelete == null) {
+            Log.w("DocumentRepository", "Índice de firma para borrar no válido: $indexToDelete")
+            return
+        }
+
+        // 3. Borramos el archivo físico
+        try {
+            val file = File(signatureToDelete.filePath)
+            if (file.exists()) {
+                file.delete()
+                Log.d("DocumentRepository", "Archivo de firma eliminado: ${signatureToDelete.filePath}")
+            }
+        } catch (e: Exception) {
+            Log.e("DocumentRepository", "Error al eliminar archivo de firma", e)
+        }
+
+        // 4. Borramos la entidad de la base de datos
+        documentDao.deleteSignature(signatureToDelete)
     }
 
 }

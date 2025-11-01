@@ -118,6 +118,7 @@ import androidx.compose.foundation.gestures.detectTapGestures // --- NUEVO ---
 
 import androidx.compose.ui.unit.Dp // <-- Añade esta importación si falta
 import androidx.compose.foundation.layout.widthIn // <-- Añade esta importación
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.Surface // <-- Asegúrate de usar esta (material 1)
 import androidx.compose.runtime.key
 import java.util.UUID
@@ -169,7 +170,8 @@ fun SignatureScreen(
     savedSignatures: List<ImageBitmap>, // Lista de firmas ya guardadas
     onSignatureComplete: (Int, Bitmap) -> Unit,
     onCancel: () -> Unit,
-    onNewSignatureCreated: (Bitmap) -> Unit
+    onNewSignatureCreated: (Bitmap) -> Unit,
+    onSavedSignatureDeleted: (Int) -> Unit // <-- 1. AÑADE ESTE PARÁMETRO
 ) {
 
     // --- ESTADO NUEVO (MULTI-FIRMA) ---
@@ -299,7 +301,8 @@ fun SignatureScreen(
             },
             onDeactivate = {
                 activeSignatureId = null
-            }
+            },
+            onSavedSignatureDeleted = onSavedSignatureDeleted // <-- 2. PASA EL CALLBACK
         )
     }
 }
@@ -379,7 +382,8 @@ private fun PlacingContent(
     onInstanceUpdate: (SignatureInstance) -> Unit,
     onInstanceDelete: (String) -> Unit,
     onInstanceActivate: (String) -> Unit,
-    onDeactivate: () -> Unit
+    onDeactivate: () -> Unit,
+    onSavedSignatureDeleted: (Int) -> Unit
     // --- FIN NUEVAS LAMBDAS ---
 ) {
 
@@ -739,6 +743,7 @@ private fun PlacingContent(
                     // --- Llama al nuevo callback ---
                     onInstanceAdd(selectedBmp, currentPageIndex)
                 },
+                onSignatureDeleted = onSavedSignatureDeleted, // <-- 2. PASA EL CALLBACK
                 onDismiss = {
                     showSubmenu = false
                 },
@@ -1421,31 +1426,36 @@ private fun SignatureSubmenu(
     savedSignatures: List<ImageBitmap>,
     onCreateNew: () -> Unit,
     onSignatureSelected: (ImageBitmap) -> Unit,
+    onSignatureDeleted: (Int) -> Unit, // <-- NUEVO
     onDismiss: () -> Unit,
-    bottomBarHeight: Dp // <-- NUEVO: Necesitamos saber qué tan alta es la barra de abajo
+    bottomBarHeight: Dp
 ) {
-    // Box para el overlay (para capturar clics fuera y cerrar)
+    // Estado para rastrear si estamos en modo de eliminación
+    var isDeleteMode by rememberSaveable { mutableStateOf(false) }
+
+    // Wrapper para el dismiss, para resetear también el estado local
+    val onDismissRequest = {
+        isDeleteMode = false
+        onDismiss()
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .pointerInput(Unit) { detectTapGestures { onDismiss() } },
-        contentAlignment = Alignment.BottomCenter // Lo anclamos todo abajo
+            .pointerInput(Unit) { detectTapGestures { onDismissRequest() } }, // Usa el nuevo wrapper
+        contentAlignment = Alignment.BottomCenter
     ) {
-        // Esta es la nueva barra de selección
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                // --- LA CLAVE ---
-                // La "levantamos" exactamente la altura de la barra inferior
                 .padding(bottom = bottomBarHeight)
-                // Detenemos los clics para que no se propaguen al overlay
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
                     onClick = {}
                 ),
-            color = Color(0xFF2C2C2E), // Mismo color que la barra inferior
-            elevation = 8.dp // Le damos sombra para que parezca estar encima
+            color = Color(0xFF2C2C2E),
+            elevation = 8.dp
         ) {
             LazyRow(
                 modifier = Modifier
@@ -1453,16 +1463,20 @@ private fun SignatureSubmenu(
                     .padding(vertical = 12.dp),
                 contentPadding = PaddingValues(horizontal = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically // Centra todo verticalmente
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 // --- Item 1: Botón "Crear nueva" ---
                 item {
                     Column(
                         modifier = Modifier
-                            .size(width = 72.dp, height = 64.dp) // Un buen tamaño
+                            .size(width = 72.dp, height = 64.dp) // Tamaño fijo
                             .clip(RoundedCornerShape(8.dp))
                             .background(Color(0xFF3A3A3C))
-                            .clickable { onCreateNew() }
+                            .clickable {
+                                if (!isDeleteMode) { // Solo funciona si NO está en modo borrado
+                                    onCreateNew()
+                                }
+                            }
                             .padding(horizontal = 4.dp, vertical = 8.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
@@ -1474,20 +1488,55 @@ private fun SignatureSubmenu(
                 }
 
                 // --- Items 2...N: Las firmas guardadas ---
-                items(savedSignatures) { sigBmp ->
-                    Image(
-                        bitmap = sigBmp,
-                        contentDescription = "Firma guardada",
+                itemsIndexed(savedSignatures) { index, sigBmp -> // <-- USAR itemsIndexed
+                    Box(
                         modifier = Modifier
-                            .height(64.dp) // Misma altura que el botón "Crear"
-                            .widthIn(min = 100.dp) // Un ancho mínimo
+                            // REQUISITO 1: Tamaño uniforme (igual que el botón "Crear")
+                            .size(width = 72.dp, height = 64.dp)
                             .clip(RoundedCornerShape(4.dp))
-                            .background(Color.White) // <-- Fondo blanco para ver la firma
+                            .background(Color.White)
                             .border(1.dp, Color.Gray, RoundedCornerShape(4.dp))
-                            .clickable { onSignatureSelected(sigBmp) }
-                            .padding(4.dp), // Padding interno
-                        contentScale = ContentScale.Fit
-                    )
+                            // REQUISITO 2: Detectar long press y tap
+                            .pointerInput(Unit) {
+                                detectTapGestures(
+                                    onLongPress = { isDeleteMode = true },
+                                    onTap = {
+                                        if (!isDeleteMode) {
+                                            onSignatureSelected(sigBmp)
+                                        }
+                                    }
+                                )
+                            },
+                        contentAlignment = Alignment.Center // Centra la imagen (ContentScale.Fit)
+                    ) {
+                        Image(
+                            bitmap = sigBmp,
+                            contentDescription = "Firma guardada",
+                            modifier = Modifier
+                                .fillMaxSize() // La imagen llena el Box
+                                .padding(4.dp), // Padding interno
+                            contentScale = ContentScale.Fit // Mantiene la relación de aspecto
+                        )
+
+                        // REQUISITO 2: Botón de eliminar
+                        if (isDeleteMode) {
+                            IconButton(
+                                onClick = { onSignatureDeleted(index) },
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .size(24.dp) // Tamaño del botón
+                                    .background(Color.Black.copy(alpha = 0.7f), CircleShape)
+                                    .padding(4.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Close,
+                                    "Eliminar",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(16.dp) // Tamaño del ícono
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }

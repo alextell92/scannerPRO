@@ -161,7 +161,6 @@ fun FinalReviewScreen(
                 )
             }
         } else if (isSignatureMode) {
-            // --- INICIO DE LA SOLUCIÓN DEFINITIVA ---
             // Se llama a SignatureScreen, que ahora contiene toda la lógica.
             SignatureScreen(
                 baseBitmaps = bitmaps,
@@ -171,10 +170,23 @@ fun FinalReviewScreen(
                     // Guarda la nueva firma en la BD en un hilo secundario
                     scope.launch(Dispatchers.IO) {
                         repository.saveSignature(newSignatureBitmap)
-                        // Opcional: Recarga la lista para que aparezca al instante
+                        // Recarga la lista para que aparezca al instante
                         mySavedSignaturesList = repository.getAllSignatures().map { it.asImageBitmap() }
                     }
                 },
+
+                // --- LÓGICA DE ELIMINACIÓN ACTUALIZADA ---
+                onSavedSignatureDeleted = { indexToDelete ->
+                    scope.launch(Dispatchers.IO) {
+                        // 1. Llama al nuevo método del repositorio
+                        repository.deleteSignature(indexToDelete)
+
+                        // 2. Recarga la lista para que la UI se actualice
+                        mySavedSignaturesList = repository.getAllSignatures().map { it.asImageBitmap() }
+                    }
+                },
+                // --- FIN DE LA ACTUALIZACIÓN ---
+
                 onSignatureComplete = { pageIndex, newBitmap ->
                     bitmaps = bitmaps.toMutableList().also { it[pageIndex] = newBitmap }
                     isSignatureMode = false
