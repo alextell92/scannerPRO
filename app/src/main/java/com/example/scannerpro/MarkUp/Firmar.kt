@@ -120,6 +120,8 @@ import androidx.compose.ui.unit.Dp // <-- Añade esta importación si falta
 import androidx.compose.foundation.layout.widthIn // <-- Añade esta importación
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.Surface // <-- Asegúrate de usar esta (material 1)
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.key
 import java.util.UUID
 
@@ -360,7 +362,32 @@ private fun DrawingContent(
         )
     }
 }
-// --- REEMPLAZA TU PlacingContent CON ESTA ---
+
+@Composable
+private fun DeleteSignatureDialog(
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Confirmar eliminación") },
+        text = { Text("¿Estás seguro de que quieres eliminar esta firma permanentemente?") },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
+            ) {
+                Text("Eliminar")
+            }
+        },
+        dismissButton = {
+            Button(onClick = onDismiss) {
+                Text("Cancelar")
+            }
+        }
+    )
+}
+
 
 @Composable
 private fun PlacingContent(
@@ -384,9 +411,9 @@ private fun PlacingContent(
     onInstanceActivate: (String) -> Unit,
     onDeactivate: () -> Unit,
     onSavedSignatureDeleted: (Int) -> Unit
-    // --- FIN NUEVAS LAMBDAS ---
-) {
 
+) {
+    var signatureIndexToDelete by rememberSaveable { mutableStateOf<Int?>(null) }
     val lazyListState = rememberLazyListState(initialFirstVisibleItemIndex = initialPageIndex)
     val density = LocalDensity.current
 
@@ -743,11 +770,30 @@ private fun PlacingContent(
                     // --- Llama al nuevo callback ---
                     onInstanceAdd(selectedBmp, currentPageIndex)
                 },
-                onSignatureDeleted = onSavedSignatureDeleted, // <-- 2. PASA EL CALLBACK
+                onRequestDelete = { index ->
+                    signatureIndexToDelete = index
+                },
                 onDismiss = {
                     showSubmenu = false
                 },
                 bottomBarHeight = bottomBarHeightDp
+            )
+        }
+
+        if (signatureIndexToDelete != null) {
+            val index = signatureIndexToDelete!! // Sabemos que no es nulo
+
+            DeleteSignatureDialog(
+                onConfirm = {
+                    // Si confirma, llama al callback de borrado original
+                    onSavedSignatureDeleted(index)
+                    // Cierra el diálogo
+                    signatureIndexToDelete = null
+                },
+                onDismiss = {
+                    // Si cancela, solo cierra el diálogo
+                    signatureIndexToDelete = null
+                }
             )
         }
 
@@ -1426,7 +1472,7 @@ private fun SignatureSubmenu(
     savedSignatures: List<ImageBitmap>,
     onCreateNew: () -> Unit,
     onSignatureSelected: (ImageBitmap) -> Unit,
-    onSignatureDeleted: (Int) -> Unit, // <-- NUEVO
+    onRequestDelete: (Int) -> Unit,
     onDismiss: () -> Unit,
     bottomBarHeight: Dp
 ) {
@@ -1521,7 +1567,7 @@ private fun SignatureSubmenu(
                         // REQUISITO 2: Botón de eliminar
                         if (isDeleteMode) {
                             IconButton(
-                                onClick = { onSignatureDeleted(index) },
+                                onClick = { onRequestDelete(index) },
                                 modifier = Modifier
                                     .align(Alignment.TopEnd)
                                     .size(24.dp) // Tamaño del botón
