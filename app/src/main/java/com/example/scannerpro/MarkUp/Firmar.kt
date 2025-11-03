@@ -121,6 +121,7 @@ import androidx.compose.foundation.layout.widthIn // <-- Añade esta importació
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.Surface // <-- Asegúrate de usar esta (material 1)
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.key
 import androidx.compose.runtime.rememberUpdatedState
@@ -201,6 +202,8 @@ fun SignatureScreen(
 
     // --- EFECTOS (para la orientación de pantalla) ---
     val activity = LocalContext.current as? Activity
+    var showExitConfirmDialog by rememberSaveable { mutableStateOf(false) }
+
     DisposableEffect(activity) {
         val originalOrientation = activity?.requestedOrientation
         onDispose {
@@ -227,7 +230,10 @@ fun SignatureScreen(
             strokeColor = strokeColor,
             strokeWidth = strokeWidth,
             onAddStroke = onAddStroke,
-            onCancel = onCancel,
+            onCancel = {
+                mode = SignatureMode.PLACING
+                parcelableStrokes = emptyList() // 1. Limpia los trazos al cancelar
+            },
             onColorChange = { strokeColor = it },
             onStrokeWidthChange = { strokeWidth = it },
             onUndo = {
@@ -253,10 +259,12 @@ fun SignatureScreen(
                     // 3. Actívala
                     activeSignatureId = newInstance.id
                     // 4. Cambia de modo
-                    mode = SignatureMode.PLACING
+
                     // 5. Llama al callback para guardarla en la BD
                     onNewSignatureCreated(newSigImageBitmap.asAndroidBitmap())
                 }
+                mode = SignatureMode.PLACING
+                parcelableStrokes = emptyList()
             }
         )
     } else { // PLACING mode
@@ -269,7 +277,16 @@ fun SignatureScreen(
             activeInstanceId = activeSignatureId,
             savedSignatures = savedSignatures,
 
-            onCancel = onCancel,
+            onCancel = {
+                // Comprueba si hay firmas en la pantalla
+                if (signatureInstances.isNotEmpty()) {
+                    // Si hay firmas, muestra el diálogo de confirmación
+                    showExitConfirmDialog = true
+                } else {
+                    // Si no hay firmas, llama a la lambda onCancel original
+                    onCancel()
+                }
+            },
             onSignatureComplete = onSignatureComplete,
 
             onRequestDrawing = { currentPageIndex ->
@@ -307,6 +324,19 @@ fun SignatureScreen(
             },
             onSavedSignatureDeleted = onSavedSignatureDeleted // <-- 2. PASA EL CALLBACK
         )
+        if (showExitConfirmDialog) {
+            ExitWithoutSavingDialog(
+                onConfirm = {
+                    // El usuario confirma "Salir"
+                    showExitConfirmDialog = false
+                    onCancel() // Llama a la lambda onCancel original
+                },
+                onDismiss = {
+                    // El usuario cancela la salida
+                    showExitConfirmDialog = false
+                }
+            )
+        }
     }
 }
 
@@ -1112,33 +1142,11 @@ private fun Offset.rotateRad(rad: Float): Offset {
 }
 
 
-
-
-
-
-
-
-
-
-
 // helpers: rotación por radianes y operaciones con Offset
 
 private operator fun Offset.times(scale: Float) = Offset(x * scale, y * scale)
 private operator fun Offset.plus(other: Offset) = Offset(x + other.x, y + other.y)
 private operator fun Offset.minus(other: Offset) = Offset(x - other.x, y - other.y)
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -1160,27 +1168,52 @@ private fun SignatureDrawingCanvas(
     onAddStroke: (List<Offset>) -> Unit
 ) {
     var currentStroke by remember { mutableStateOf<List<Offset>>(emptyList()) }
-    var isDrawing by remember { mutableStateOf(false) }
+
     Canvas(
         modifier = modifier
             .fillMaxWidth()
             .background(Color.White, RoundedCornerShape(8.dp))
+            // --- AÑADE ESTO para "recortar" visualmente ---
+            .clip(RoundedCornerShape(8.dp))
             .pointerInput(Unit) {
                 detectDragGestures(
                     onDragStart = { offset ->
-                        currentStroke = listOf(offset) // Inicia el trazo
+                        // Inicia el trazo solo si empieza dentro del canvas
+                        if (offset.x >= 0f && offset.x <= size.width &&
+                            offset.y >= 0f && offset.y <= size.height
+                        ) {
+                            currentStroke = listOf(offset)
+                        }
                     },
                     onDrag = { change: PointerInputChange, _ ->
-                        currentStroke = currentStroke + change.position // Añade todos los puntos
+                        val canvasSize = this.size
+                        val newPoint = change.position
+
+                        // --- LA CORRECCIÓN PRINCIPAL ---
+                        // Solo añade el punto si está DENTRO del canvas
+                        if (newPoint.x >= 0f && newPoint.x <= canvasSize.width &&
+                            newPoint.y >= 0f && newPoint.y <= canvasSize.height
+                        ) {
+                            // Añade el punto a la lista
+                            currentStroke = currentStroke + newPoint
+                        } else {
+                            // Si el dedo se sale, termina el trazo actual
+                            // para que no se "teletransporte" de vuelta
+                            if (currentStroke.size > 1) {
+                                onAddStroke(currentStroke)
+                            }
+                            currentStroke = emptyList() // Resetea
+                        }
+                        // --- FIN DE LA CORRECCIÓN ---
+
                         change.consume()
                     },
                     onDragEnd = {
-                        val canvasSize = this.size // Obtiene el tamaño real del Canvas
-
-                        // FILTRA el trazo al final para eliminar puntos "fantasma"
+                        // El filtro aquí sigue siendo una buena práctica
+                        // por si acaso, pero la lógica principal ya está en onDrag
                         val filteredStroke = currentStroke.filter { point ->
-                            point.x in 0f..canvasSize.width.toFloat() &&
-                                    point.y in 0f..canvasSize.height.toFloat()
+                            point.x in 0f..size.width.toFloat() &&
+                                    point.y in 0f..size.height.toFloat()
                         }
 
                         if (filteredStroke.size > 1) {
@@ -1194,6 +1227,7 @@ private fun SignatureDrawingCanvas(
                 )
             }
     ) {
+        // --- (Tu lógica de dibujo de trazos se mantiene igual) ---
         strokes.forEach { stroke ->
             if (stroke.size > 1) {
                 val path = Path().apply {
@@ -1405,73 +1439,7 @@ private fun captureSignature(strokes: List<List<Offset>>, color: Color, strokeWi
     }
 }
 
-private fun placeSignatureOnBitmap(
-    base: Bitmap,
-    signature: ImageBitmap?,
-    signatureOffset: Offset,
-    signatureScale: Float,
-    signatureRotation: Float,
-    containerSize: IntSize
-): Bitmap {
-    if (signature == null) return base
 
-    val pagePaddingPx = 16.dp.value
-    val viewWidth = containerSize.width - (pagePaddingPx * 2)
-    val viewHeight = containerSize.height - (pagePaddingPx * 2)
-
-    val scaledBitmapWidth: Float
-    val scaledBitmapHeight: Float
-
-    val bitmapAspectRatio = base.width.toFloat() / base.height.toFloat()
-    val viewAspectRatio = viewWidth / viewHeight
-
-    if (bitmapAspectRatio > viewAspectRatio) {
-        scaledBitmapWidth = viewWidth
-        scaledBitmapHeight = viewWidth / bitmapAspectRatio
-    } else {
-        scaledBitmapHeight = viewHeight
-        scaledBitmapWidth = viewHeight * bitmapAspectRatio
-    }
-
-    val imageOffsetX = (containerSize.width - scaledBitmapWidth) / 2f
-    val imageOffsetY = (containerSize.height - scaledBitmapHeight) / 2f
-
-    // signatureOffset es top-left absoluto en el contenedor
-    val signatureCenterX = signatureOffset.x + (signature.width * signatureScale / 2f)
-    val signatureCenterY = signatureOffset.y + (signature.height * signatureScale / 2f)
-
-    val signatureOnScaledBitmapX = signatureCenterX - imageOffsetX - (signature.width * signatureScale / 2f)
-    val signatureOnScaledBitmapY = signatureCenterY - imageOffsetY - (signature.height * signatureScale / 2f)
-
-    val scaleRatio = base.width / scaledBitmapWidth
-    val finalX = signatureOnScaledBitmapX * scaleRatio
-    val finalY = signatureOnScaledBitmapY * scaleRatio
-    val finalSignatureScale = signatureScale * scaleRatio
-
-    val resultBitmap = base.copy(Bitmap.Config.ARGB_8888, true)
-    val canvas = android.graphics.Canvas(resultBitmap)
-    val paint = android.graphics.Paint().apply { isAntiAlias = true }
-
-    val rotationInDegrees = Math.toDegrees(signatureRotation.toDouble()).toFloat()
-
-    // 2. Calcula el centro de la firma (el pivote) DESPUÉS de escalarla
-    val pivotX = (signature.width / 2f) * finalSignatureScale
-    val pivotY = (signature.height / 2f) * finalSignatureScale
-
-    val matrix = android.graphics.Matrix().apply {
-        // 1. Escala la firma (desde el 0,0)
-        postScale(finalSignatureScale, finalSignatureScale)
-
-        // 2. ROTA la firma escalada alrededor de su nuevo centro (pivote)
-        postRotate(rotationInDegrees, pivotX, pivotY)
-
-        // 3. Mueve la firma (ya escalada y rotada) a su posición final (top-left)
-        postTranslate(finalX, finalY)
-    }
-
-    canvas.drawBitmap(signature.asAndroidBitmap(), matrix, paint)
-    return resultBitmap
-}
 
 private fun captureBitmap(
     width: Int,
@@ -1707,4 +1675,31 @@ private fun mergeSignaturesOnPage(
     }
 
     return resultBitmap
+}
+
+
+@Composable
+private fun ExitWithoutSavingDialog(
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Salir sin guardar") },
+        text = { Text("¿Estás seguro de que quieres salir? Las firmas que has colocado no se aplicarán al documento.") },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                // Le damos un color rojo para indicar una acción "destructiva"
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+            ) {
+                Text("Salir")
+            }
+        },
+        dismissButton = {
+            Button(onClick = onDismiss) {
+                Text("Cancelar")
+            }
+        }
+    )
 }
