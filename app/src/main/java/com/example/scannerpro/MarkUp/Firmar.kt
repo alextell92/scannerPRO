@@ -123,6 +123,7 @@ import androidx.compose.material.Surface // <-- Asegúrate de usar esta (materia
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.key
+import androidx.compose.runtime.rememberUpdatedState
 import java.util.UUID
 
 
@@ -163,7 +164,7 @@ private data class SignatureInstance(
     var rotation: Float // En radianes
 )
 
-// --- REEMPLAZA TU SignatureScreen CON ESTA VERSIÓN LIMPIA ---
+
 
 @Composable
 fun SignatureScreen(
@@ -799,7 +800,6 @@ private fun PlacingContent(
 
     } // --- FIN DEL BOX RAÍZ ---
 }
-
 @Composable
 fun DraggableSignature(
     modifier: Modifier = Modifier,
@@ -815,6 +815,17 @@ fun DraggableSignature(
 ) {
     val density = LocalDensity.current
     val coroutineScope = rememberCoroutineScope()
+
+    // --- ESTADO ACTUALIZADO (LA SOLUCIÓN) ---
+    // Estas referencias siempre tendrán el valor MÁS RECIENTE
+    // de los parámetros, evitando el "estado obsoleto" (stale state)
+    // dentro de los gestos.
+    val latestOnTransformChange by rememberUpdatedState(onTransformChange)
+    val latestOnIsSignatureActiveChange by rememberUpdatedState(onIsSignatureActiveChange)
+    val latestOnDeleteSignature by rememberUpdatedState(onDeleteSignature)
+    val latestOnDragEnd by rememberUpdatedState(onDragEnd)
+    val latestIsSignatureActive by rememberUpdatedState(isSignatureActive)
+    // --- FIN DE LA SOLUCIÓN ---
 
     // Sensibilidades / límites / snap config (sin cambios)
     val SENSITIVITY_SCALE = 0.0035f
@@ -844,6 +855,7 @@ fun DraggableSignature(
     var accumulatedDrag by remember { mutableStateOf(Offset.Zero) }
 
     // Sincronizar desde el padre cuando no interactuamos
+    // (Esta lógica está bien, no se toca)
     LaunchedEffect(signatureOffset) {
         if (!isInteracting) {
             if ((localOffset - signatureOffset).getDistance() > 0.5f) {
@@ -887,40 +899,40 @@ fun DraggableSignature(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
                     onClick = {
-                        if (!isSignatureActive) onIsSignatureActiveChange(true)
+                        // Usar la referencia más reciente
+                        if (!latestIsSignatureActive) latestOnIsSignatureActiveChange(true)
                     }
                 )
-                // ---------- Aquí está la corrección principal ----------
-                .pointerInput(Unit) {
+                // --- CAMBIO: Volver a pointerInput(Unit) ---
+                .pointerInput(Unit) { // 'Unit' evita que el detector se reinicie
                     detectDragGestures(
                         onDragStart = { start ->
-                            if (!isSignatureActive) onIsSignatureActiveChange(true)
+                            // Usar la referencia más reciente
+                            if (!latestIsSignatureActive) {
+                                latestOnIsSignatureActiveChange(true)
+                            }
                             isInteracting = true
                             touchOffsetInElement = start
                         },
                         onDragEnd = {
                             isInteracting = false
                             touchOffsetInElement = null
-                            onDragEnd(localOffset)
+                            latestOnDragEnd(localOffset) // Usar la más reciente
                         },
                         onDragCancel = {
                             isInteracting = false
                             touchOffsetInElement = null
-                            onDragEnd(localOffset)
+                            latestOnDragEnd(localOffset) // Usar la más reciente
                         },
                         onDrag = { change, dragAmount ->
                             if (dragAmount == Offset.Zero) return@detectDragGestures
                             change.consumePositionChange()
 
-                            // >>> CORRECCIÓN: convertir el delta desde coordenadas LOCALES (rotadas)
-                            // a coordenadas GLOBALES del contenedor antes de aplicarlo.
-                            // Si `dragAmount` viene en el sistema rotado del elemento, rotamos
-                            // ese vector por el ángulo localRotation para obtener el delta
-                            // en coordenadas del padre.
                             val globalDelta = dragAmount.rotateBy(localRotation)
 
                             localOffset += globalDelta
-                            onTransformChange(localOffset, localScale, localRotation)
+                            // Usar la referencia más reciente
+                            latestOnTransformChange(localOffset, localScale, localRotation)
                         }
                     )
                 }
@@ -933,7 +945,8 @@ fun DraggableSignature(
                 contentScale = ContentScale.Fit
             )
 
-            if (isSignatureActive) {
+            // Usar la referencia más reciente para decidir si se muestra
+            if (latestIsSignatureActive) {
                 Box(
                     modifier = Modifier
                         .matchParentSize()
@@ -943,9 +956,10 @@ fun DraggableSignature(
             }
 
             // Botón eliminar (top-start) y handle (bottom-end)
-            if (isSignatureActive) {
+            // Usar la referencia más reciente para decidir si se muestran
+            if (latestIsSignatureActive) {
                 IconButton(
-                    onClick = onDeleteSignature,
+                    onClick = latestOnDeleteSignature, // Usar la más reciente
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .graphicsLayer {
@@ -968,9 +982,20 @@ fun DraggableSignature(
                         .size(36.dp)
                         .clip(CircleShape)
                         .background(if (isHandleDragging) Color(0xFF616161) else Color(0xFF414141))
-                        .pointerInput(isSignatureActive) {
+                        // --- AÑADIDO: Clickable para el handle ---
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = {
+                                if (!latestIsSignatureActive) latestOnIsSignatureActiveChange(true)
+                            }
+                        )
+                        // --- CAMBIO: Volver a pointerInput(Unit) ---
+                        .pointerInput(Unit) { // 'Unit' evita que el detector se reinicie
                             detectDragGestures(
                                 onDragStart = {
+                                    // Usar la referencia más reciente
+                                    if (!latestIsSignatureActive) latestOnIsSignatureActiveChange(true)
                                     isHandleDragging = true
                                     isInteracting = true
                                     accumulatedDrag = Offset.Zero
@@ -986,8 +1011,6 @@ fun DraggableSignature(
                                         val targetRotDeg = snapToStep(Math.toDegrees(localRotation.toDouble()).toFloat(), SNAP_ROT_DEG)
                                         val targetRot = Math.toRadians(targetRotDeg.toDouble()).toFloat()
 
-                                        // Mantener el centro global constante (sigue funcionando
-                                        // si la rotación es alrededor del centro).
                                         val preSnapW = bmpWidthPx * scaleAnim.value
                                         val preSnapH = bmpHeightPx * scaleAnim.value
                                         val preSnapCenterLocal = Offset(preSnapW / 2f, preSnapH / 2f)
@@ -1007,20 +1030,23 @@ fun DraggableSignature(
                                         val newOffset = curCenterGlobal - postSnapCenterLocal
 
                                         localOffset = newOffset
-                                        onTransformChange(localOffset, localScale, localRotation)
-                                        onDragEnd(localOffset)
+                                        // Usar las referencias más recientes
+                                        latestOnTransformChange(localOffset, localScale, localRotation)
+                                        latestOnDragEnd(localOffset)
                                     }
                                 },
                                 onDragCancel = {
                                     isHandleDragging = false
                                     isInteracting = false
                                     accumulatedDrag = Offset.Zero
-                                    coroutineScope.launch { onDragEnd(localOffset) }
+                                    // Usar la referencia más reciente
+                                    coroutineScope.launch { latestOnDragEnd(localOffset) }
                                 },
                                 onDrag = { change, dragAmount ->
                                     change.consumePositionChange()
                                     accumulatedDrag += dragAmount
 
+                                    // ... (lógica de mixScale, mixRot)
                                     val ax = abs(accumulatedDrag.x)
                                     val ay = abs(accumulatedDrag.y)
                                     if (ax + ay == 0f) return@detectDragGestures
@@ -1036,7 +1062,7 @@ fun DraggableSignature(
                                     val newScale = (localScale * (1f + dx * SENSITIVITY_SCALE * mixScale)).coerceIn(MIN_SCALE, MAX_SCALE)
                                     val newRotation = localRotation + dy * SENSITIVITY_ROT * mixRot
 
-                                    // Compensación sólo por escala (mantenemos centro fijo)
+                                    // ... (lógica de compensación de offset)
                                     val displayW = bmpWidthPx * localScale
                                     val displayH = bmpHeightPx * localScale
                                     val centerLocal = Offset(displayW / 2f, displayH / 2f)
@@ -1047,12 +1073,12 @@ fun DraggableSignature(
                                     val newCenterLocal = Offset(newDisplayW / 2f, newDisplayH / 2f)
                                     val newOffset = curCenterGlobal - newCenterLocal
 
-                                    // Aplicar cambios en vivo
                                     localScale = newScale
                                     localRotation = newRotation
                                     localOffset = newOffset
 
-                                    onTransformChange(localOffset, localScale, localRotation)
+                                    // Usar la referencia más reciente
+                                    latestOnTransformChange(localOffset, localScale, localRotation)
                                 }
                             )
                         },
@@ -1243,7 +1269,7 @@ private fun SignatureDrawingControlsVertical(
                 onClick = onConfirm,
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF30D5C8)),
                 shape = CircleShape,
-                modifier = Modifier.size(56.dp)
+                modifier = Modifier.size(46.dp)
             ) {
                 Icon(Icons.Default.Done, contentDescription = "Confirmar")
             }
