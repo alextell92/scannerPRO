@@ -87,7 +87,6 @@ import org.opencv.core.Size
 import org.opencv.imgproc.Imgproc
 import java.nio.ByteBuffer
 import java.util.ArrayList
-import kotlin.math.abs
 import kotlin.math.pow
 import kotlin.math.sqrt
 
@@ -281,7 +280,10 @@ fun DocumentScannerScreen(
                 }
             }
             ScannerFlowState.FINAL_REVIEW -> {
+                val docId = currentDocumentId
+                if (docId != null) {
                 FinalReviewScreen(
+                    documentId = docId,
                     initialBitmaps = scannedBitmaps,
                     repository = documentRepository,
                     onAddAnotherScan = { resetToCameraState() },
@@ -298,6 +300,12 @@ fun DocumentScannerScreen(
                     },
                     onFinish = { onClose() }
                 )
+                } else {
+                    // Si el ID es nulo por alguna razón, no podemos mostrar
+                    // la revisión final. Volvemos a la cámara.
+                    Log.e("DocumentScanner", "Error: Se intentó entrar a FINAL_REVIEW con un ID nulo.")
+                    resetToCameraState()
+                }
             }
         }
 

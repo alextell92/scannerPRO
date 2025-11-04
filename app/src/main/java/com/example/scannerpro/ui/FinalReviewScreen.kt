@@ -105,6 +105,7 @@ private enum class ViewMode { LIST, GRID, PAGE }
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FinalReviewScreen(
+    documentId: Long,
     initialBitmaps: List<Bitmap>,
     repository: DocumentRepository,
     onEditRequest: (Int) -> Unit,
@@ -181,6 +182,13 @@ fun FinalReviewScreen(
 
                 onSignatureComplete = { pageIndex, newBitmap ->
                     bitmaps = bitmaps.toMutableList().also { it[pageIndex] = newBitmap }
+                    scope.launch(Dispatchers.IO) {
+                        repository.updatePageInDocument(
+                            documentId = documentId, // <-- Asumo que tienes el ID del documento aquí
+                            pageIndex = pageIndex,
+                            pageBitmap = newBitmap
+                        )
+                    }
                     isSignatureMode = false
                 },
                 onCancel = { isSignatureMode = false }
