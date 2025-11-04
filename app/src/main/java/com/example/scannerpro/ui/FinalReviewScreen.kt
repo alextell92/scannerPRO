@@ -101,10 +101,7 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
-
-
 private enum class ViewMode { LIST, GRID, PAGE }
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FinalReviewScreen(
@@ -118,23 +115,18 @@ fun FinalReviewScreen(
     var bitmaps by remember { mutableStateOf(initialBitmaps) }
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-
     var viewMode by rememberSaveable { mutableStateOf(AppPreferences.getViewMode(context)) }
     var selectedIndex by rememberSaveable { mutableStateOf<Int?>(if (bitmaps.isNotEmpty()) 0 else null) }
     var isEditMode by rememberSaveable { mutableStateOf(false) }
-
     var showShareSheet by rememberSaveable { mutableStateOf(false) }
     var isSelectionModeActive by rememberSaveable { mutableStateOf(false) }
     var selectedIndices by rememberSaveable { mutableStateOf<Set<Int>>(emptySet()) }
-
     var isCollageMode by rememberSaveable { mutableStateOf(false) }
     var bitmapsForCollage by remember { mutableStateOf<List<Bitmap>>(emptyList()) }
-
     var showMarkupSubMenu by rememberSaveable { mutableStateOf(false) }
     var isMarkupMode by rememberSaveable { mutableStateOf(false) }
     var isSignatureMode by rememberSaveable { mutableStateOf(false) }
     var currentPageInPageView by rememberSaveable { mutableStateOf<Int?>(if (bitmaps.isNotEmpty()) 0 else null) }
-
     var mySavedSignaturesList by remember { mutableStateOf<List<ImageBitmap>>(emptyList()) }
     LaunchedEffect(isSignatureMode) {
         if (isSignatureMode) {
